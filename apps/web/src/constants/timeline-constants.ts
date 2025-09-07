@@ -6,7 +6,7 @@ export const TRACK_COLORS: Record<
   { solid: string; background: string; border: string }
 > = {
   media: {
-    solid: "bg-blue-500",
+    solid: "bg-primary",
     background: "",
     border: "",
   },
