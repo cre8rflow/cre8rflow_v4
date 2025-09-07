@@ -2,8 +2,10 @@ import { create } from "zustand";
 import { storageService } from "@/lib/storage/storage-service";
 import { useTimelineStore } from "./timeline-store";
 import { generateUUID } from "@/lib/utils";
-import { MediaType, MediaFile } from "@/types/media";
+import { MediaType, MediaFile, IndexingStatus } from "@/types/media";
 import { videoCache } from "@/lib/video-cache";
+import { twelveLabsService } from "@/lib/twelvelabs-service";
+import { saveTwelveLabsMetadata, updateTwelveLabsStatus, getTwelveLabsMetadata } from "@/lib/supabase";
 
 interface MediaStore {
   mediaFiles: MediaFile[];
@@ -18,6 +20,12 @@ interface MediaStore {
   loadProjectMedia: (projectId: string) => Promise<void>;
   clearProjectMedia: (projectId: string) => Promise<void>;
   clearAllMedia: () => void;
+  
+  // V3 Integration: Twelvelabs status management
+  updateMediaIndexingStatus: (
+    mediaId: string, 
+    status: Partial<Pick<MediaFile, 'indexingStatus' | 'indexingProgress' | 'indexingError' | 'twelveLabsVideoId' | 'twelveLabsTaskId'>>
+  ) => void;
 }
 
 // Helper function to determine file type
@@ -143,6 +151,11 @@ export const useMediaStore = create<MediaStore>((set, get) => ({
     const newItem: MediaFile = {
       ...file,
       id: generateUUID(),
+      // Initialize Twelvelabs fields for videos
+      ...(file.type === 'video' ? {
+        indexingStatus: 'pending' as IndexingStatus,
+        indexingProgress: 0,
+      } : {}),
     };
 
     // Add to local state immediately for UI responsiveness
@@ -150,7 +163,7 @@ export const useMediaStore = create<MediaStore>((set, get) => ({
       mediaFiles: [...state.mediaFiles, newItem],
     }));
 
-    // Save to persistent storage in background
+    // Existing workflow: Save to persistent storage in background
     try {
       await storageService.saveMediaFile({ projectId, mediaItem: newItem });
     } catch (error) {
@@ -159,6 +172,59 @@ export const useMediaStore = create<MediaStore>((set, get) => ({
       set((state) => ({
         mediaFiles: state.mediaFiles.filter((media) => media.id !== newItem.id),
       }));
+      return; // Don't proceed with Twelvelabs if storage failed
+    }
+
+    // V3 Integration: Start Twelvelabs indexing for videos (parallel operation)
+    if (file.type === 'video' && newItem.url) {
+      console.log(`🎬 Starting Twelvelabs indexing for video: ${newItem.name}`);
+      
+      // This runs in the background and doesn't block the main workflow
+      twelveLabsService.startBackgroundIndexing(
+        'default-user', // TODO: Replace with actual user ID
+        newItem.url,
+        async (statusUpdate) => {
+          console.log(`📊 Twelvelabs status update for ${newItem.id}:`, statusUpdate);
+          
+          // Update local state with new status
+          const { updateMediaIndexingStatus } = get();
+          updateMediaIndexingStatus(newItem.id, {
+            indexingStatus: statusUpdate.status,
+            indexingProgress: statusUpdate.progress,
+            indexingError: statusUpdate.error,
+            twelveLabsVideoId: statusUpdate.task?.video_id,
+            twelveLabsTaskId: statusUpdate.task?._id,
+          });
+          
+          // Persist status to Supabase (runs in background)
+          try {
+            const supabaseData = {
+              media_id: newItem.id,
+              project_id: projectId,
+              twelve_labs_video_id: statusUpdate.task?.video_id,
+              twelve_labs_task_id: statusUpdate.task?._id,
+              indexing_status: statusUpdate.status,
+              indexing_progress: statusUpdate.progress,
+              error_message: statusUpdate.error,
+              metadata: statusUpdate.task ? { task: statusUpdate.task } : undefined,
+            };
+            
+            await saveTwelveLabsMetadata(supabaseData);
+            console.log(`💾 Saved Twelvelabs status to Supabase for ${newItem.id}`);
+          } catch (supabaseError) {
+            console.error(`❌ Failed to save Twelvelabs status to Supabase for ${newItem.id}:`, supabaseError);
+            // Don't throw - this is a background operation
+          }
+        }
+      ).catch((error) => {
+        console.error(`❌ Failed to start Twelvelabs indexing for ${newItem.id}:`, error);
+        // Update status to failed
+        const { updateMediaIndexingStatus } = get();
+        updateMediaIndexingStatus(newItem.id, {
+          indexingStatus: 'failed',
+          indexingError: error instanceof Error ? error.message : 'Unknown error',
+        });
+      });
     }
   },
 
@@ -207,6 +273,18 @@ export const useMediaStore = create<MediaStore>((set, get) => ({
     } catch (error) {
       console.error("Failed to delete media item:", error);
     }
+
+    // V3 Integration: Clean up Twelvelabs metadata if it was a video
+    if (item?.type === 'video') {
+      try {
+        const { deleteTwelveLabsMetadata } = await import('@/lib/supabase');
+        await deleteTwelveLabsMetadata(id, projectId);
+        console.log(`🗑️ Cleaned up Twelvelabs metadata for ${id}`);
+      } catch (error) {
+        console.error(`❌ Failed to clean up Twelvelabs metadata for ${id}:`, error);
+        // Don't throw - this is cleanup
+      }
+    }
   },
 
   loadProjectMedia: async (projectId) => {
@@ -240,7 +318,49 @@ export const useMediaStore = create<MediaStore>((set, get) => ({
         })
       );
 
-      set({ mediaFiles: updatedMediaItems });
+      // V3 Integration: Restore Twelvelabs status for videos (parallel operation)
+      try {
+        const videoItems = updatedMediaItems.filter(item => item.type === 'video');
+        if (videoItems.length > 0) {
+          console.log(`🔄 Restoring Twelvelabs status for ${videoItems.length} videos`);
+          
+          const videoIds = videoItems.map(item => item.id);
+          const twelveLabsMetadata = await getTwelveLabsMetadata(projectId, videoIds);
+          
+          // Create a map for quick lookup
+          const statusMap = new Map(
+            twelveLabsMetadata.map(metadata => [
+              metadata.media_id,
+              {
+                twelveLabsVideoId: metadata.twelve_labs_video_id,
+                twelveLabsTaskId: metadata.twelve_labs_task_id,
+                indexingStatus: metadata.indexing_status as IndexingStatus,
+                indexingProgress: metadata.indexing_progress,
+                indexingError: metadata.error_message,
+              }
+            ])
+          );
+          
+          // Merge Twelvelabs status with media items
+          const mediaItemsWithStatus = updatedMediaItems.map(item => {
+            if (item.type === 'video' && statusMap.has(item.id)) {
+              const status = statusMap.get(item.id)!;
+              console.log(`📋 Restored Twelvelabs status for ${item.name}:`, status);
+              return { ...item, ...status };
+            }
+            return item;
+          });
+          
+          set({ mediaFiles: mediaItemsWithStatus });
+          console.log(`✅ Successfully restored Twelvelabs status for ${statusMap.size} videos`);
+        } else {
+          set({ mediaFiles: updatedMediaItems });
+        }
+      } catch (twelveLabsError) {
+        console.error("Failed to restore Twelvelabs status:", twelveLabsError);
+        // Don't fail the entire load operation, just use items without status
+        set({ mediaFiles: updatedMediaItems });
+      }
     } catch (error) {
       console.error("Failed to load media items:", error);
     } finally {
@@ -292,5 +412,16 @@ export const useMediaStore = create<MediaStore>((set, get) => ({
 
     // Clear local state
     set({ mediaFiles: [] });
+  },
+
+  // V3 Integration: Update media indexing status
+  updateMediaIndexingStatus: (mediaId, status) => {
+    set((state) => ({
+      mediaFiles: state.mediaFiles.map((media) =>
+        media.id === mediaId
+          ? { ...media, ...status }
+          : media
+      ),
+    }));
   },
 }));
