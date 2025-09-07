@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { env } from "@/env";
 import { supabaseSelectOne } from "@/lib/supabase";
+import { listIndexes } from "@/lib/twelvelabs";
 
 /**
  * Health check endpoint for V3 integration
@@ -12,6 +13,7 @@ export async function GET() {
     supabaseConfigured: false,
     supabaseConnectivity: false,
     twelvelabsConfigured: false,
+    twelvelabsConnectivity: false,
   };
 
   try {
@@ -42,9 +44,26 @@ export async function GET() {
       }
     }
 
-    const overallStatus = hasSupabase && (checks.supabaseConnectivity === true || checks.supabaseConnectivity === "table_missing") 
+    // Test Twelvelabs connectivity if configured
+    if (hasTwelvelabs) {
+      try {
+        // Try to list indexes to test connectivity
+        await listIndexes();
+        checks.twelvelabsConnectivity = true;
+        checks.twelvelabsMessage = "Connected successfully";
+      } catch (twelvelabsError) {
+        checks.twelvelabsConnectivity = false;
+        checks.twelvelabsMessage = twelvelabsError instanceof Error ? twelvelabsError.message : "Connection failed";
+      }
+    }
+
+    const overallStatus = hasSupabase && 
+                         (checks.supabaseConnectivity === true || checks.supabaseConnectivity === "table_missing") &&
+                         hasTwelvelabs && checks.twelvelabsConnectivity === true
       ? "healthy" 
-      : "partial";
+      : hasSupabase || hasTwelvelabs 
+        ? "partial"
+        : "unconfigured";
     
     return NextResponse.json({
       status: overallStatus,
