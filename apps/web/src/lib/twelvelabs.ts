@@ -14,7 +14,7 @@ export class TwelveLabsApiError extends Error {
     public response?: any
   ) {
     super(message);
-    this.name = 'TwelveLabsApiError';
+    this.name = "TwelveLabsApiError";
   }
 }
 
@@ -26,18 +26,28 @@ const IndexSchema = z.object({
   updated_at: z.string(),
   expires_at: z.string().optional(),
   addons: z.array(z.string()).optional(),
-  models: z.array(z.object({
-    model_name: z.string(),
-    model_options: z.array(z.string()),
-    finetuned: z.boolean().optional(),
-  })),
+  models: z.array(
+    z.object({
+      model_name: z.string(),
+      model_options: z.array(z.string()),
+      finetuned: z.boolean().optional(),
+    })
+  ),
   video_count: z.number().optional(),
   total_duration: z.number().optional(),
 });
 
 const TaskSchema = z.object({
   _id: z.string(),
-  status: z.enum(['queued', 'pending', 'validating', 'uploading', 'indexing', 'ready', 'failed']),
+  status: z.enum([
+    "queued",
+    "pending",
+    "validating",
+    "uploading",
+    "indexing",
+    "ready",
+    "failed",
+  ]),
   type: z.string().optional(), // v1.3 API doesn't always return this field
   message: z.string().optional(),
   progress: z.number().optional(),
@@ -56,10 +66,12 @@ const VideoSchema = z.object({
     height: z.number(),
     size: z.number(),
   }),
-  hls: z.object({
-    video_url: z.string(),
-    thumbnail_urls: z.array(z.string()).optional(),
-  }).optional(),
+  hls: z
+    .object({
+      video_url: z.string(),
+      thumbnail_urls: z.array(z.string()).optional(),
+    })
+    .optional(),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -70,16 +82,20 @@ const SearchResultSchema = z.object({
     total_count: z.number(),
     total_duration: z.number(),
   }),
-  data: z.array(z.object({
-    score: z.number(),
-    start: z.number(),
-    end: z.number(),
-    video_id: z.string(),
-    metadata: z.array(z.object({
-      type: z.string(),
-      text: z.string(),
-    })),
-  })),
+  data: z.array(
+    z.object({
+      score: z.number(),
+      start: z.number(),
+      end: z.number(),
+      video_id: z.string(),
+      metadata: z.array(
+        z.object({
+          type: z.string(),
+          text: z.string(),
+        })
+      ),
+    })
+  ),
 });
 
 export type Index = z.infer<typeof IndexSchema>;
@@ -94,17 +110,19 @@ async function twelveLabsRequest(endpoint: string, options: RequestInit = {}) {
   }
 
   const url = `https://api.twelvelabs.io/v1.3/${endpoint}`;
-  console.log(`Making Twelve Labs API request: ${options.method || 'GET'} ${url}`);
+  console.log(
+    `Making Twelve Labs API request: ${options.method || "GET"} ${url}`
+  );
 
   // Prepare headers - don't set Content-Type for FormData
   const headers: Record<string, string> = {
-    'X-API-Key': env.TWELVELABS_API_KEY,
+    "X-API-Key": env.TWELVELABS_API_KEY,
     ...options.headers,
   };
-  
+
   // Only set Content-Type to application/json if not FormData
   if (!(options.body instanceof FormData)) {
-    headers['Content-Type'] = 'application/json';
+    headers["Content-Type"] = "application/json";
   }
 
   const response = await fetch(url, {
@@ -115,43 +133,48 @@ async function twelveLabsRequest(endpoint: string, options: RequestInit = {}) {
   const responseData = await response.json();
 
   if (!response.ok) {
-    console.error('Twelve Labs API error:', {
+    console.error("Twelve Labs API error:", {
       status: response.status,
       statusText: response.statusText,
       data: responseData,
     });
     throw new TwelveLabsApiError(
-      responseData.message || `API request failed: ${response.status} ${response.statusText}`,
+      responseData.message ||
+        `API request failed: ${response.status} ${response.statusText}`,
       response.status,
       responseData
     );
   }
 
-  console.log('Twelve Labs API response:', responseData);
+  console.log("Twelve Labs API response:", responseData);
   return responseData;
 }
 
 /**
  * Find an existing index by name
  */
-export async function findExistingIndex(indexName: string): Promise<Index | null> {
+export async function findExistingIndex(
+  indexName: string
+): Promise<Index | null> {
   console.log(`Looking for existing index: ${indexName}`);
-  
+
   try {
-    const response = await twelveLabsRequest('indexes');
+    const response = await twelveLabsRequest("indexes");
     const indexes = IndexSchema.array().parse(response.data || []);
-    
-    const existingIndex = indexes.find(index => index.index_name === indexName);
-    
+
+    const existingIndex = indexes.find(
+      (index) => index.index_name === indexName
+    );
+
     if (existingIndex) {
-      console.log('Found existing index:', existingIndex);
+      console.log("Found existing index:", existingIndex);
       return existingIndex;
     }
-    
-    console.log('No existing index found');
+
+    console.log("No existing index found");
     return null;
   } catch (error) {
-    console.error('Error finding existing index:', error);
+    console.error("Error finding existing index:", error);
     throw error;
   }
 }
@@ -159,36 +182,41 @@ export async function findExistingIndex(indexName: string): Promise<Index | null
 /**
  * Create a new index for a user/project
  */
-export async function createUserIndex(indexName: string, modelName: string = 'marengo2.7'): Promise<Index> {
+export async function createUserIndex(
+  indexName: string,
+  modelName: string = "marengo2.7"
+): Promise<Index> {
   console.log(`Creating new index: ${indexName} with model: ${modelName}`);
-  
+
   try {
     const indexData = {
       index_name: indexName,
       models: [
         {
           model_name: modelName,
-          model_options: ['visual', 'audio'] // v1.3 uses 'visual' and 'audio' instead of the old options
-        }
+          model_options: ["visual", "audio"], // v1.3 uses 'visual' and 'audio' instead of the old options
+        },
       ],
-      addons: ['thumbnail'] // Enable thumbnail generation
+      addons: ["thumbnail"], // Enable thumbnail generation
     };
 
-    const response = await twelveLabsRequest('indexes', {
-      method: 'POST',
+    const response = await twelveLabsRequest("indexes", {
+      method: "POST",
       body: JSON.stringify(indexData),
     });
 
     // The create response only returns _id, so we need to fetch the full index details
-    console.log('Index created with ID:', response._id);
-    
+    console.log("Index created with ID:", response._id);
+
     // Fetch the full index details
-    const fullIndexResponse = await twelveLabsRequest(`indexes/${response._id}`);
+    const fullIndexResponse = await twelveLabsRequest(
+      `indexes/${response._id}`
+    );
     const index = IndexSchema.parse(fullIndexResponse);
-    console.log('Successfully created and retrieved index:', index);
+    console.log("Successfully created and retrieved index:", index);
     return index;
   } catch (error) {
-    console.error('Error creating index:', error);
+    console.error("Error creating index:", error);
     throw error;
   }
 }
@@ -199,10 +227,10 @@ export async function createUserIndex(indexName: string, modelName: string = 'ma
 export async function uploadVideoToIndex(
   indexId: string,
   videoUrl: string,
-  language: string = 'en'
+  language: string = "en"
 ): Promise<Task> {
   console.log(`Uploading video to index ${indexId}: ${videoUrl}`);
-  
+
   try {
     const uploadData = {
       index_id: indexId,
@@ -210,16 +238,16 @@ export async function uploadVideoToIndex(
       url: videoUrl,
     };
 
-    const response = await twelveLabsRequest('tasks', {
-      method: 'POST',
+    const response = await twelveLabsRequest("tasks", {
+      method: "POST",
       body: JSON.stringify(uploadData),
     });
 
     const task = TaskSchema.parse(response);
-    console.log('Video upload task created:', task);
+    console.log("Video upload task created:", task);
     return task;
   } catch (error) {
-    console.error('Error uploading video:', error);
+    console.error("Error uploading video:", error);
     throw error;
   }
 }
@@ -230,32 +258,32 @@ export async function uploadVideoToIndex(
 export async function uploadVideoFileToIndex(
   indexId: string,
   videoFile: File,
-  language: string = 'en'
+  language: string = "en"
 ): Promise<Task> {
   console.log(`Uploading video file to index ${indexId}: ${videoFile.name}`);
-  
+
   try {
     const formData = new FormData();
-    formData.append('video_file', videoFile);
-    formData.append('index_id', indexId);
-    formData.append('language', language);
+    formData.append("video_file", videoFile);
+    formData.append("index_id", indexId);
+    formData.append("language", language);
 
-    const response = await twelveLabsRequest('tasks', {
-      method: 'POST',
+    const response = await twelveLabsRequest("tasks", {
+      method: "POST",
       body: formData,
       // Don't set Content-Type header for FormData - let the browser set it with boundary
     });
 
     // The create response only returns _id and video_id, so we need to fetch the full task details
-    console.log('Task created with ID:', response._id);
-    
+    console.log("Task created with ID:", response._id);
+
     // Fetch the full task details
     const fullTaskResponse = await twelveLabsRequest(`tasks/${response._id}`);
     const task = TaskSchema.parse(fullTaskResponse);
-    console.log('Video file upload task created and retrieved:', task);
+    console.log("Video file upload task created and retrieved:", task);
     return task;
   } catch (error) {
-    console.error('Error uploading video file:', error);
+    console.error("Error uploading video file:", error);
     throw error;
   }
 }
@@ -265,15 +293,15 @@ export async function uploadVideoFileToIndex(
  */
 export async function getTaskStatus(taskId: string): Promise<Task> {
   console.log(`Getting task status: ${taskId}`);
-  
+
   try {
     const response = await twelveLabsRequest(`tasks/${taskId}`);
     const task = TaskSchema.parse(response);
-    
-    console.log('Task status:', task);
+
+    console.log("Task status:", task);
     return task;
   } catch (error) {
-    console.error('Error getting task status:', error);
+    console.error("Error getting task status:", error);
     throw error;
   }
 }
@@ -284,7 +312,7 @@ export async function getTaskStatus(taskId: string): Promise<Task> {
 export async function analyzeVideo(
   indexId: string,
   videoUrl: string,
-  language: string = 'en'
+  language: string = "en"
 ): Promise<Task> {
   return uploadVideoToIndex(indexId, videoUrl, language);
 }
@@ -297,30 +325,30 @@ export async function searchVideos(
   query: string,
   searchOptions?: {
     page_limit?: number;
-    sort_option?: 'score' | 'clip_count';
-    threshold?: 'high' | 'medium' | 'low';
+    sort_option?: "score" | "clip_count";
+    threshold?: "high" | "medium" | "low";
   }
 ): Promise<SearchResult> {
   console.log(`Searching videos in index ${indexId}: "${query}"`);
-  
+
   try {
     const searchData = {
       query,
       index_id: indexId,
-      search_options: ['visual', 'conversation', 'text_in_video', 'logo'],
+      search_options: ["visual", "conversation", "text_in_video", "logo"],
       ...searchOptions,
     };
 
-    const response = await twelveLabsRequest('search', {
-      method: 'POST',
+    const response = await twelveLabsRequest("search", {
+      method: "POST",
       body: JSON.stringify(searchData),
     });
 
     const searchResult = SearchResultSchema.parse(response);
-    console.log('Search results:', searchResult);
+    console.log("Search results:", searchResult);
     return searchResult;
   } catch (error) {
-    console.error('Error searching videos:', error);
+    console.error("Error searching videos:", error);
     throw error;
   }
 }
@@ -330,15 +358,15 @@ export async function searchVideos(
  */
 export async function getVideoDetails(videoId: string): Promise<Video> {
   console.log(`Getting video details: ${videoId}`);
-  
+
   try {
     const response = await twelveLabsRequest(`videos/${videoId}`);
     const video = VideoSchema.parse(response);
-    
-    console.log('Video details:', video);
+
+    console.log("Video details:", video);
     return video;
   } catch (error) {
-    console.error('Error getting video details:', error);
+    console.error("Error getting video details:", error);
     throw error;
   }
 }
@@ -347,16 +375,16 @@ export async function getVideoDetails(videoId: string): Promise<Video> {
  * List all indexes
  */
 export async function listIndexes(): Promise<Index[]> {
-  console.log('Listing all indexes');
-  
+  console.log("Listing all indexes");
+
   try {
-    const response = await twelveLabsRequest('indexes');
+    const response = await twelveLabsRequest("indexes");
     const indexes = IndexSchema.array().parse(response.data || []);
-    
-    console.log('Retrieved indexes:', indexes);
+
+    console.log("Retrieved indexes:", indexes);
     return indexes;
   } catch (error) {
-    console.error('Error listing indexes:', error);
+    console.error("Error listing indexes:", error);
     throw error;
   }
 }
@@ -366,15 +394,15 @@ export async function listIndexes(): Promise<Index[]> {
  */
 export async function getIndexDetails(indexId: string): Promise<Index> {
   console.log(`Getting index details: ${indexId}`);
-  
+
   try {
     const response = await twelveLabsRequest(`indexes/${indexId}`);
     const index = IndexSchema.parse(response);
-    
-    console.log('Index details:', index);
+
+    console.log("Index details:", index);
     return index;
   } catch (error) {
-    console.error('Error getting index details:', error);
+    console.error("Error getting index details:", error);
     throw error;
   }
 }
@@ -384,15 +412,15 @@ export async function getIndexDetails(indexId: string): Promise<Index> {
  */
 export async function deleteIndex(indexId: string): Promise<void> {
   console.log(`Deleting index: ${indexId}`);
-  
+
   try {
     await twelveLabsRequest(`indexes/${indexId}`, {
-      method: 'DELETE',
+      method: "DELETE",
     });
-    
-    console.log('Successfully deleted index');
+
+    console.log("Successfully deleted index");
   } catch (error) {
-    console.error('Error deleting index:', error);
+    console.error("Error deleting index:", error);
     throw error;
   }
 }

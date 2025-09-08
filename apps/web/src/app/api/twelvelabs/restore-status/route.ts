@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getTwelveLabsMetadata, getMediaIndexJobs } from '@/lib/supabase';
+import { NextRequest, NextResponse } from "next/server";
+import { getTwelveLabsMetadata, getMediaIndexJobs } from "@/lib/supabase";
 
 /**
  * Twelvelabs Restore Status API Route
@@ -7,44 +7,47 @@ import { getTwelveLabsMetadata, getMediaIndexJobs } from '@/lib/supabase';
  */
 export async function GET(request: NextRequest) {
   try {
-    console.log('🎯 Twelvelabs Restore Status API - Starting request');
-    
+    console.log("🎯 Twelvelabs Restore Status API - Starting request");
+
     const { searchParams } = new URL(request.url);
-    const projectId = searchParams.get('project_id');
-    const mediaIdsParam = searchParams.get('media_ids');
-    
+    const projectId = searchParams.get("project_id");
+    const mediaIdsParam = searchParams.get("media_ids");
+
     if (!projectId) {
-      console.error('❌ Project ID is required');
+      console.error("❌ Project ID is required");
       return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Project ID is required' 
+        {
+          success: false,
+          error: "Project ID is required",
         },
         { status: 400 }
       );
     }
-    
+
     let mediaIds: string[] | undefined;
     if (mediaIdsParam) {
       try {
         mediaIds = JSON.parse(mediaIdsParam);
         if (!Array.isArray(mediaIds)) {
-          throw new Error('Media IDs must be an array');
+          throw new Error("Media IDs must be an array");
         }
       } catch (error) {
-        console.error('❌ Invalid media_ids format:', error);
+        console.error("❌ Invalid media_ids format:", error);
         return NextResponse.json(
-          { 
-            success: false, 
-            error: 'Invalid media_ids format. Must be a JSON array of strings' 
+          {
+            success: false,
+            error: "Invalid media_ids format. Must be a JSON array of strings",
           },
           { status: 400 }
         );
       }
     }
-    
-    console.log(`📋 Restoring status for project ${projectId}`, mediaIds ? `with media IDs: ${mediaIds.join(', ')}` : '(all media)');
-    
+
+    console.log(
+      `📋 Restoring status for project ${projectId}`,
+      mediaIds ? `with media IDs: ${mediaIds.join(", ")}` : "(all media)"
+    );
+
     // Get metadata from Supabase (legacy table) and index jobs (new table)
     const [legacy, jobs] = await Promise.all([
       getTwelveLabsMetadata(projectId, mediaIds),
@@ -72,13 +75,14 @@ export async function GET(request: NextRequest) {
 
     // Merge/override from jobs table (prefer freshest info)
     for (const job of jobs) {
-      const mappedStatus = job.status === 'ready'
-        ? 'completed'
-        : job.status === 'indexing'
-        ? 'processing'
-        : job.status === 'failed'
-        ? 'failed'
-        : 'pending';
+      const mappedStatus =
+        job.status === "ready"
+          ? "completed"
+          : job.status === "indexing"
+            ? "processing"
+            : job.status === "failed"
+              ? "failed"
+              : "pending";
 
       const current = restoredStatus[job.media_id] ?? {};
       restoredStatus[job.media_id] = {
@@ -88,7 +92,8 @@ export async function GET(request: NextRequest) {
         twelveLabsVideoId: job.video_id ?? current.twelveLabsVideoId,
         twelveLabsTaskId: job.task_id ?? current.twelveLabsTaskId,
         status: mappedStatus,
-        progress: typeof job.progress === 'number' ? job.progress : current.progress,
+        progress:
+          typeof job.progress === "number" ? job.progress : current.progress,
         error: job.error_message ?? current.error,
         metadata: job.metadata ?? current.metadata,
         updatedAt: current.updatedAt, // keep if present; jobs doesn't store updatedAt in our helper
@@ -97,20 +102,20 @@ export async function GET(request: NextRequest) {
 
     const count = Object.keys(restoredStatus).length;
     console.log(`✅ Successfully restored status for ${count} media items`);
-    
+
     return NextResponse.json({
       success: true,
       restoredStatus,
       count,
-      message: 'Status restored successfully'
+      message: "Status restored successfully",
     });
-    
   } catch (error) {
-    console.error('❌ Twelvelabs Restore Status API error:', error);
+    console.error("❌ Twelvelabs Restore Status API error:", error);
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
+        error:
+          error instanceof Error ? error.message : "Unknown error occurred",
       },
       { status: 500 }
     );

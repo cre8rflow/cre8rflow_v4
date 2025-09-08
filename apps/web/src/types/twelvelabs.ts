@@ -3,14 +3,14 @@
  * Ported from V3 for type safety in Twelvelabs integration
  */
 
-export type IndexingStatus = 
-  | 'pending' 
-  | 'uploading' 
-  | 'validating' 
-  | 'queued' 
-  | 'indexing' 
-  | 'ready' 
-  | 'failed';
+export type IndexingStatus =
+  | "pending"
+  | "uploading"
+  | "validating"
+  | "queued"
+  | "indexing"
+  | "ready"
+  | "failed";
 
 export interface TwelveLabsIndex {
   id: string;
@@ -60,7 +60,7 @@ export interface SearchResult {
   score: number;
   start: number;
   end: number;
-  confidence?: 'high' | 'medium' | 'low';
+  confidence?: "high" | "medium" | "low";
   metadata?: {
     text?: string;
     type?: string;
@@ -130,8 +130,8 @@ export interface SearchRequest {
   index_id: string;
   search_options: string[];
   page_limit?: number;
-  sort_option?: 'score' | 'clip_count';
-  threshold?: 'high' | 'medium' | 'low';
+  sort_option?: "score" | "clip_count";
+  threshold?: "high" | "medium" | "low";
 }
 
 export interface SearchResponse {
