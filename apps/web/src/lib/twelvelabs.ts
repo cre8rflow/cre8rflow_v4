@@ -21,19 +21,24 @@ export class TwelveLabsApiError extends Error {
 // Zod schemas for API response validation
 const IndexSchema = z.object({
   _id: z.string(),
-  name: z.string(),
-  options: z.array(z.string()),
-  engine_id: z.string(),
-  video_count: z.number().optional(),
-  total_duration: z.number().optional(),
+  index_name: z.string(),
   created_at: z.string(),
   updated_at: z.string(),
+  expires_at: z.string().optional(),
+  addons: z.array(z.string()).optional(),
+  models: z.array(z.object({
+    model_name: z.string(),
+    model_options: z.array(z.string()),
+    finetuned: z.boolean().optional(),
+  })),
+  video_count: z.number().optional(),
+  total_duration: z.number().optional(),
 });
 
 const TaskSchema = z.object({
   _id: z.string(),
-  status: z.enum(['pending', 'validating', 'indexing', 'ready', 'failed']),
-  type: z.string(),
+  status: z.enum(['queued', 'pending', 'validating', 'uploading', 'indexing', 'ready', 'failed']),
+  type: z.string().optional(), // v1.3 API doesn't always return this field
   message: z.string().optional(),
   progress: z.number().optional(),
   created_at: z.string(),
@@ -88,16 +93,23 @@ async function twelveLabsRequest(endpoint: string, options: RequestInit = {}) {
     throw new TwelveLabsApiError("Twelve Labs API key not configured");
   }
 
-  const url = `https://api.twelvelabs.io/v1.2/${endpoint}`;
+  const url = `https://api.twelvelabs.io/v1.3/${endpoint}`;
   console.log(`Making Twelve Labs API request: ${options.method || 'GET'} ${url}`);
+
+  // Prepare headers - don't set Content-Type for FormData
+  const headers: Record<string, string> = {
+    'X-API-Key': env.TWELVELABS_API_KEY,
+    ...options.headers,
+  };
+  
+  // Only set Content-Type to application/json if not FormData
+  if (!(options.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   const response = await fetch(url, {
     ...options,
-    headers: {
-      'X-API-Key': env.TWELVELABS_API_KEY,
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
+    headers,
   });
 
   const responseData = await response.json();
@@ -129,7 +141,7 @@ export async function findExistingIndex(indexName: string): Promise<Index | null
     const response = await twelveLabsRequest('indexes');
     const indexes = IndexSchema.array().parse(response.data || []);
     
-    const existingIndex = indexes.find(index => index.name === indexName);
+    const existingIndex = indexes.find(index => index.index_name === indexName);
     
     if (existingIndex) {
       console.log('Found existing index:', existingIndex);
@@ -147,14 +159,19 @@ export async function findExistingIndex(indexName: string): Promise<Index | null
 /**
  * Create a new index for a user/project
  */
-export async function createUserIndex(indexName: string, engineId: string = 'marengo2.6'): Promise<Index> {
-  console.log(`Creating new index: ${indexName} with engine: ${engineId}`);
+export async function createUserIndex(indexName: string, modelName: string = 'marengo2.7'): Promise<Index> {
+  console.log(`Creating new index: ${indexName} with model: ${modelName}`);
   
   try {
     const indexData = {
-      name: indexName,
-      options: ['visual', 'conversation', 'text_in_video', 'logo'],
-      engine_id: engineId,
+      index_name: indexName,
+      models: [
+        {
+          model_name: modelName,
+          model_options: ['visual', 'audio'] // v1.3 uses 'visual' and 'audio' instead of the old options
+        }
+      ],
+      addons: ['thumbnail'] // Enable thumbnail generation
     };
 
     const response = await twelveLabsRequest('indexes', {
@@ -162,8 +179,13 @@ export async function createUserIndex(indexName: string, engineId: string = 'mar
       body: JSON.stringify(indexData),
     });
 
-    const index = IndexSchema.parse(response);
-    console.log('Successfully created index:', index);
+    // The create response only returns _id, so we need to fetch the full index details
+    console.log('Index created with ID:', response._id);
+    
+    // Fetch the full index details
+    const fullIndexResponse = await twelveLabsRequest(`indexes/${response._id}`);
+    const index = IndexSchema.parse(fullIndexResponse);
+    console.log('Successfully created and retrieved index:', index);
     return index;
   } catch (error) {
     console.error('Error creating index:', error);
@@ -198,6 +220,42 @@ export async function uploadVideoToIndex(
     return task;
   } catch (error) {
     console.error('Error uploading video:', error);
+    throw error;
+  }
+}
+
+/**
+ * Upload a video file to an index using FormData
+ */
+export async function uploadVideoFileToIndex(
+  indexId: string,
+  videoFile: File,
+  language: string = 'en'
+): Promise<Task> {
+  console.log(`Uploading video file to index ${indexId}: ${videoFile.name}`);
+  
+  try {
+    const formData = new FormData();
+    formData.append('video_file', videoFile);
+    formData.append('index_id', indexId);
+    formData.append('language', language);
+
+    const response = await twelveLabsRequest('tasks', {
+      method: 'POST',
+      body: formData,
+      // Don't set Content-Type header for FormData - let the browser set it with boundary
+    });
+
+    // The create response only returns _id and video_id, so we need to fetch the full task details
+    console.log('Task created with ID:', response._id);
+    
+    // Fetch the full task details
+    const fullTaskResponse = await twelveLabsRequest(`tasks/${response._id}`);
+    const task = TaskSchema.parse(fullTaskResponse);
+    console.log('Video file upload task created and retrieved:', task);
+    return task;
+  } catch (error) {
+    console.error('Error uploading video file:', error);
     throw error;
   }
 }

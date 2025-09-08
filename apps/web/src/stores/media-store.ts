@@ -4,7 +4,7 @@ import { useTimelineStore } from "./timeline-store";
 import { generateUUID } from "@/lib/utils";
 import { MediaType, MediaFile, IndexingStatus } from "@/types/media";
 import { videoCache } from "@/lib/video-cache";
-import { twelveLabsService } from "@/lib/twelvelabs-service";
+import { twelveLabsClient } from "@/lib/twelvelabs-client";
 import { saveTwelveLabsMetadata, updateTwelveLabsStatus, getTwelveLabsMetadata } from "@/lib/supabase";
 
 interface MediaStore {
@@ -176,13 +176,12 @@ export const useMediaStore = create<MediaStore>((set, get) => ({
     }
 
     // V3 Integration: Start Twelvelabs indexing for videos (parallel operation)
-    if (file.type === 'video' && newItem.url) {
+    if (file.type === 'video' && newItem.file) {
       console.log(`🎬 Starting Twelvelabs indexing for video: ${newItem.name}`);
       
       // This runs in the background and doesn't block the main workflow
-      twelveLabsService.startBackgroundIndexing(
-        'default-user', // TODO: Replace with actual user ID
-        newItem.url,
+      twelveLabsClient.startBackgroundIndexing(
+        newItem.file,
         async (statusUpdate) => {
           console.log(`📊 Twelvelabs status update for ${newItem.id}:`, statusUpdate);
           
@@ -196,27 +195,21 @@ export const useMediaStore = create<MediaStore>((set, get) => ({
             twelveLabsTaskId: statusUpdate.task?._id,
           });
           
-          // Persist status to Supabase (runs in background)
+          // Persist status via server: trigger API to both fetch and persist
           try {
-            const supabaseData = {
-              media_id: newItem.id,
-              project_id: projectId,
-              twelve_labs_video_id: statusUpdate.task?.video_id,
-              twelve_labs_task_id: statusUpdate.task?._id,
-              indexing_status: statusUpdate.status,
-              indexing_progress: statusUpdate.progress,
-              error_message: statusUpdate.error,
-              metadata: statusUpdate.task ? { task: statusUpdate.task } : undefined,
-            };
-            
-            await saveTwelveLabsMetadata(supabaseData);
-            console.log(`💾 Saved Twelvelabs status to Supabase for ${newItem.id}`);
-          } catch (supabaseError) {
-            console.error(`❌ Failed to save Twelvelabs status to Supabase for ${newItem.id}:`, supabaseError);
-            // Don't throw - this is a background operation
+            if (statusUpdate.task?._id) {
+              const params = new URLSearchParams({
+                task_id: statusUpdate.task._id,
+                project_id: projectId,
+                media_id: newItem.id,
+              });
+              await fetch(`/api/twelvelabs/status?${params.toString()}`);
+            }
+          } catch (persistError) {
+            console.error(`❌ Failed to persist Twelvelabs status for ${newItem.id}:`, persistError);
           }
         }
-      ).catch((error) => {
+      , 'en', { projectId, mediaId: newItem.id }).catch((error) => {
         console.error(`❌ Failed to start Twelvelabs indexing for ${newItem.id}:`, error);
         // Update status to failed
         const { updateMediaIndexingStatus } = get();
@@ -322,43 +315,77 @@ export const useMediaStore = create<MediaStore>((set, get) => ({
       try {
         const videoItems = updatedMediaItems.filter(item => item.type === 'video');
         if (videoItems.length > 0) {
-          console.log(`🔄 Restoring Twelvelabs status for ${videoItems.length} videos`);
-          
+          console.log(`🔄 Restoring Twelvelabs status for ${videoItems.length} videos via API`);
+
           const videoIds = videoItems.map(item => item.id);
-          const twelveLabsMetadata = await getTwelveLabsMetadata(projectId, videoIds);
-          
-          // Create a map for quick lookup
-          const statusMap = new Map(
-            twelveLabsMetadata.map(metadata => [
-              metadata.media_id,
-              {
-                twelveLabsVideoId: metadata.twelve_labs_video_id,
-                twelveLabsTaskId: metadata.twelve_labs_task_id,
-                indexingStatus: metadata.indexing_status as IndexingStatus,
-                indexingProgress: metadata.indexing_progress,
-                indexingError: metadata.error_message,
+          const params = new URLSearchParams({ project_id: projectId, media_ids: JSON.stringify(videoIds) });
+          const resp = await fetch(`/api/twelvelabs/restore-status?${params.toString()}`);
+          if (resp.ok) {
+            const json = await resp.json();
+            const restored = (json.restoredStatus || {}) as Record<string, any>;
+
+            let mediaItemsWithStatus = updatedMediaItems.map(item => {
+              if (item.type === 'video' && restored[item.id]) {
+                const s = restored[item.id];
+                return {
+                  ...item,
+                  twelveLabsVideoId: s.twelveLabsVideoId,
+                  twelveLabsTaskId: s.twelveLabsTaskId,
+                  indexingStatus: s.status as IndexingStatus,
+                  indexingProgress: s.progress,
+                  indexingError: s.error,
+                };
               }
-            ])
-          );
-          
-          // Merge Twelvelabs status with media items
-          const mediaItemsWithStatus = updatedMediaItems.map(item => {
-            if (item.type === 'video' && statusMap.has(item.id)) {
-              const status = statusMap.get(item.id)!;
-              console.log(`📋 Restored Twelvelabs status for ${item.name}:`, status);
-              return { ...item, ...status };
+              return item;
+            });
+
+            set({ mediaFiles: mediaItemsWithStatus });
+            console.log(`✅ Successfully restored Twelvelabs status for ${Object.keys(restored).length} videos`);
+
+            // Immediately re-check any in-flight tasks to avoid stale pending/processing after refresh
+            const inflight = mediaItemsWithStatus.filter(
+              (item) => item.type === 'video' &&
+                (item.indexingStatus === 'pending' || item.indexingStatus === 'processing') &&
+                !!item.twelveLabsTaskId
+            );
+
+            if (inflight.length > 0) {
+              console.log(`🔄 Verifying ${inflight.length} in-flight Twelvelabs tasks after restore`);
+              await Promise.all(
+                inflight.map(async (item) => {
+                  try {
+                    const params = new URLSearchParams({
+                      task_id: String(item.twelveLabsTaskId),
+                      project_id: projectId,
+                      media_id: item.id,
+                    });
+                    const r = await fetch(`/api/twelvelabs/status?${params.toString()}`);
+                    if (!r.ok) return;
+                    const data = await r.json();
+                    const raw = String(data.status ?? 'pending');
+                    const mapped: IndexingStatus = raw === 'ready' ? 'completed' : raw === 'failed' ? 'failed' : raw === 'indexing' ? 'processing' : 'pending';
+                    get().updateMediaIndexingStatus(item.id, {
+                      indexingStatus: mapped,
+                      indexingProgress: typeof data.progress === 'number' ? data.progress : item.indexingProgress,
+                      twelveLabsVideoId: data.task?.video_id ?? item.twelveLabsVideoId,
+                      twelveLabsTaskId: data.task?._id ?? item.twelveLabsTaskId,
+                    });
+                  } catch (e) {
+                    // Ignore transient errors; status will be refreshed on next poll anyway
+                  }
+                })
+              );
+              // Refresh mediaFiles from state after updates
+              mediaItemsWithStatus = get().mediaFiles;
             }
-            return item;
-          });
-          
-          set({ mediaFiles: mediaItemsWithStatus });
-          console.log(`✅ Successfully restored Twelvelabs status for ${statusMap.size} videos`);
+          } else {
+            set({ mediaFiles: updatedMediaItems });
+          }
         } else {
           set({ mediaFiles: updatedMediaItems });
         }
       } catch (twelveLabsError) {
         console.error("Failed to restore Twelvelabs status:", twelveLabsError);
-        // Don't fail the entire load operation, just use items without status
         set({ mediaFiles: updatedMediaItems });
       }
     } catch (error) {

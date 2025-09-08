@@ -9,14 +9,24 @@ export interface MediaTwelveLabsRow {
   id?: string;
   media_id: string;
   project_id: string;
+  // V4 naming (kept for compatibility)
   twelve_labs_video_id?: string;
   twelve_labs_task_id?: string;
-  indexing_status: 'pending' | 'processing' | 'completed' | 'failed';
+  indexing_status?: 'pending' | 'processing' | 'completed' | 'failed';
   indexing_progress?: number;
   error_message?: string;
   created_at?: string;
   updated_at?: string;
   metadata?: any;
+  // V3 naming (per your existing dataset)
+  index_id?: string;
+  video_id?: string;
+  task_id?: string;
+  status?: string;
+  duration?: number | string | null;
+  filename?: string | null;
+  width?: number | null;
+  height?: number | null;
 }
 
 /**
@@ -53,10 +63,21 @@ export async function saveTwelveLabsMetadata(data: MediaTwelveLabsRow): Promise<
   console.log('Saving TwelveLabs metadata:', data);
 
   try {
-    const response = await supabaseFetch('media_twelvelabs', {
+    const response = await supabaseFetch('media_twelvelabs?on_conflict=media_id,project_id', {
       method: 'POST',
+      headers: {
+        // Upsert semantics: merge on (media_id, project_id)
+        Prefer: 'resolution=merge-duplicates,return=representation',
+      },
       body: JSON.stringify({
         ...data,
+        // Mirror fields across V3/V4 schemas for compatibility
+        video_id: data.video_id ?? data.twelve_labs_video_id,
+        task_id: data.task_id ?? data.twelve_labs_task_id,
+        status: data.status ?? data.indexing_status,
+        twelve_labs_video_id: data.twelve_labs_video_id ?? data.video_id,
+        twelve_labs_task_id: data.twelve_labs_task_id ?? data.task_id,
+        indexing_status: (data.indexing_status ?? data.status) as any,
         updated_at: new Date().toISOString(),
       }),
     });
@@ -87,6 +108,13 @@ export async function updateTwelveLabsStatus(
         method: 'PATCH',
         body: JSON.stringify({
           ...updates,
+          // Keep both naming schemes updated
+          video_id: updates.video_id ?? updates.twelve_labs_video_id,
+          task_id: updates.task_id ?? updates.twelve_labs_task_id,
+          status: updates.status ?? updates.indexing_status,
+          twelve_labs_video_id: updates.twelve_labs_video_id ?? updates.video_id,
+          twelve_labs_task_id: updates.twelve_labs_task_id ?? updates.task_id,
+          indexing_status: (updates.indexing_status ?? updates.status) as any,
           updated_at: new Date().toISOString(),
         }),
       }
@@ -141,7 +169,7 @@ export async function deleteTwelveLabsMetadata(
   console.log(`Deleting TwelveLabs metadata for media ${mediaId} in project ${projectId}`);
 
   try {
-    const response = await supabaseFetch(
+    await supabaseFetch(
       `media_twelvelabs?media_id=eq.${mediaId}&project_id=eq.${projectId}`,
       {
         method: 'DELETE',
@@ -153,6 +181,66 @@ export async function deleteTwelveLabsMetadata(
     console.error('Failed to delete TwelveLabs metadata:', error);
     throw error;
   }
+}
+
+// ==================== NEW: media_index_jobs helpers ====================
+
+export interface MediaIndexJobRow {
+  id?: string;
+  project_id: string;
+  media_id: string;
+  storage_key?: string | null;
+  index_id?: string | null;
+  task_id?: string | null;
+  video_id?: string | null;
+  status?: 'pending' | 'indexing' | 'ready' | 'failed';
+  progress?: number | null;
+  error_message?: string | null;
+  metadata?: any;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export async function upsertMediaIndexJob(row: MediaIndexJobRow): Promise<MediaIndexJobRow[]> {
+  const response = await supabaseFetch('media_index_jobs?on_conflict=project_id,media_id', {
+    method: 'POST',
+    headers: {
+      Prefer: 'resolution=merge-duplicates,return=representation',
+    },
+    body: JSON.stringify({
+      ...row,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+  return response.json();
+}
+
+export async function updateMediaIndexJob(
+  projectId: string,
+  mediaId: string,
+  updates: Partial<MediaIndexJobRow>
+): Promise<MediaIndexJobRow[]> {
+  const response = await supabaseFetch(`media_index_jobs?project_id=eq.${projectId}&media_id=eq.${mediaId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      ...updates,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+  return response.json();
+}
+
+export async function getMediaIndexJobs(
+  projectId: string,
+  mediaIds?: string[]
+): Promise<MediaIndexJobRow[]> {
+  let url = `media_index_jobs?project_id=eq.${projectId}`;
+  if (mediaIds?.length) {
+    const filter = mediaIds.map((id) => `"${id}"`).join(',');
+    url += `&media_id=in.(${filter})`;
+  }
+  const response = await supabaseFetch(url, { method: 'GET' });
+  return response.json();
 }
 
 /**

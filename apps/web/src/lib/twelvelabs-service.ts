@@ -2,6 +2,7 @@ import {
   findExistingIndex,
   createUserIndex,
   uploadVideoToIndex,
+  uploadVideoFileToIndex,
   getTaskStatus,
   analyzeVideo,
   searchVideos,
@@ -46,7 +47,7 @@ export interface SearchVideosResponse {
 }
 
 export class TwelveLabsService {
-  private readonly DEFAULT_ENGINE_ID = 'marengo2.6';
+  private readonly DEFAULT_MODEL_NAME = 'marengo2.7';
   
   /**
    * Get or create an index for a user/project
@@ -63,7 +64,7 @@ export class TwelveLabsService {
       // If no index exists, create one
       if (!index) {
         console.log(`Creating new index for user: ${userId}`);
-        index = await createUserIndex(indexName, this.DEFAULT_ENGINE_ID);
+        index = await createUserIndex(indexName, this.DEFAULT_MODEL_NAME);
       }
       
       return {
@@ -112,6 +113,49 @@ export class TwelveLabsService {
       };
     } catch (error) {
       console.error('Failed to upload video:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  /**
+   * Upload a video file for indexing
+   * @param userId User ID
+   * @param videoFile Video file to upload
+   * @param language Language for transcription
+   */
+  async uploadVideoFile(
+    userId: string,
+    videoFile: File,
+    language: string = 'en'
+  ): Promise<{ success: boolean; task?: any; error?: string }> {
+    try {
+      console.log(`Uploading video file for user ${userId}: ${videoFile.name}`);
+      
+      // Get the user's index
+      const indexResponse = await this.getUserIndex(userId);
+      if (!indexResponse.success || !indexResponse.index) {
+        return {
+          success: false,
+          error: indexResponse.error || 'Failed to get user index',
+        };
+      }
+      
+      // Upload video file to index
+      const task = await uploadVideoFileToIndex(
+        indexResponse.index._id,
+        videoFile,
+        language
+      );
+      
+      return {
+        success: true,
+        task,
+      };
+    } catch (error) {
+      console.error('Failed to upload video file:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { twelveLabsService } from '@/lib/twelvelabs-service';
+import { updateTwelveLabsStatus, updateMediaIndexJob } from '@/lib/supabase';
 
 /**
  * Twelvelabs Status API Route
@@ -11,6 +12,8 @@ export async function GET(request: NextRequest) {
     
     const { searchParams } = new URL(request.url);
     const taskId = searchParams.get('task_id');
+    const projectId = searchParams.get('project_id');
+    const mediaId = searchParams.get('media_id');
     
     if (!taskId) {
       console.error('❌ Task ID is required');
@@ -40,7 +43,41 @@ export async function GET(request: NextRequest) {
     }
     
     console.log('✅ Successfully retrieved task status:', result.task);
-    
+
+    // Persist status update if identifiers are provided (mirror V3 behavior)
+    try {
+      if (projectId && mediaId && result.task) {
+        const status = result.task.status === 'ready' ? 'completed'
+          : result.task.status === 'failed' ? 'failed'
+          : result.task.status === 'indexing' ? 'processing'
+          : 'pending';
+        // Upsert semantics: ensure row exists then update
+        await updateTwelveLabsStatus(mediaId, projectId, {
+          // V4 fields
+          indexing_status: status as any,
+          indexing_progress: result.task.progress ?? undefined,
+          twelve_labs_video_id: result.task.video_id,
+          twelve_labs_task_id: result.task._id,
+          // V3 fields
+          status,
+          video_id: result.task.video_id,
+          task_id: result.task._id,
+          metadata: { task: result.task },
+        });
+        await updateMediaIndexJob(projectId, mediaId, {
+          status: (result.task.status === 'ready' ? 'ready' : result.task.status === 'indexing' ? 'indexing' : result.task.status === 'failed' ? 'failed' : 'pending') as any,
+          progress: result.task.progress ?? undefined,
+          task_id: result.task._id,
+          video_id: result.task.video_id,
+          metadata: { task: result.task },
+        });
+        console.log('💾 Persisted Twelvelabs status update');
+      }
+    } catch (persistError) {
+      console.error('❌ Failed to persist Twelvelabs status update:', persistError);
+      // Non-fatal
+    }
+
     return NextResponse.json({
       success: true,
       task: result.task,
