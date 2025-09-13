@@ -8,6 +8,7 @@
 import { startAgentStream } from "@/lib/agent-client";
 import { useProjectStore, DEFAULT_FPS } from "@/stores/project-store";
 import { useTimelineStore } from "@/stores/timeline-store";
+import { useMediaStore } from "@/stores/media-store";
 import { usePlaybackStore } from "@/stores/playback-store";
 import { toast } from "sonner";
 
@@ -19,6 +20,7 @@ export function useAgentOrchestrator() {
   const { activeProject } = useProjectStore();
   const { tracks } = useTimelineStore();
   const { currentTime } = usePlaybackStore();
+  const { mediaFiles } = useMediaStore();
 
   return ({ prompt }: { prompt: string }) => {
     // Calculate total timeline duration
@@ -32,12 +34,24 @@ export function useAgentOrchestrator() {
       return Math.max(maxDuration, trackMaxDuration);
     }, 0);
 
+    // Derive TwelveLabs video IDs used in the current timeline
+    const usedMediaIds = new Set<string>();
+    for (const track of tracks) {
+      for (const el of track.elements) {
+        if ((el as any).type === "media") usedMediaIds.add((el as any).mediaId);
+      }
+    }
+    const videoIdsUsed = Array.from(usedMediaIds)
+      .map((id) => mediaFiles.find((m) => m.id === id)?.twelveLabsVideoId)
+      .filter((v): v is string => !!v);
+
     // Build lightweight metadata payload
     const metadata = {
       projectId: activeProject?.id,
       duration,
       fps: activeProject?.fps ?? DEFAULT_FPS,
       playheadTime: currentTime,
+      videoIdsUsed,
       tracks: tracks.map((track) => ({
         id: track.id,
         type: track.type,

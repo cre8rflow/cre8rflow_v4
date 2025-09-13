@@ -77,25 +77,34 @@ const VideoSchema = z.object({
 });
 
 const SearchResultSchema = z.object({
-  query: z.string(),
-  pool: z.object({
+  search_pool: z.object({
     total_count: z.number(),
     total_duration: z.number(),
+    index_id: z.string(),
   }),
   data: z.array(
     z.object({
-      score: z.number(),
+      score: z.number().optional(),
       start: z.number(),
       end: z.number(),
       video_id: z.string(),
-      metadata: z.array(
-        z.object({
-          type: z.string(),
-          text: z.string(),
-        })
-      ),
+      metadata: z
+        .array(
+          z.object({
+            type: z.string().optional(),
+            text: z.string().optional(),
+          })
+        )
+        .optional(),
     })
   ),
+  page_info: z
+    .object({
+      limit_per_page: z.number().optional(),
+      total_results: z.number().optional(),
+      page_expires_at: z.string().optional(),
+    })
+    .optional(),
 });
 
 export type Index = z.infer<typeof IndexSchema>;
@@ -327,21 +336,37 @@ export async function searchVideos(
     page_limit?: number;
     sort_option?: "score" | "clip_count";
     threshold?: "high" | "medium" | "low";
-  }
+    search_options?: Array<"audio" | "visual" | "conversation" | "text_in_video" | "logo">;
+  },
+  videoIds?: string[]
 ): Promise<SearchResult> {
   console.log(`Searching videos in index ${indexId}: "${query}"`);
 
   try {
-    const searchData = {
-      query,
-      index_id: indexId,
-      search_options: ["visual", "conversation", "text_in_video", "logo"],
-      ...searchOptions,
-    };
+    // Build multipart form-data per TL API requirements
+    const form = new FormData();
+    // Text search must use 'query_text' (per TL v1.3 API)
+    form.append("query_text", query);
+    form.append("index_id", indexId);
+    // Search domains (must be supported by the index). Default conservatively to ['visual'].
+    const domains =
+      (searchOptions?.search_options && searchOptions.search_options.length)
+        ? searchOptions.search_options
+        : ["visual"];
+    domains.forEach((opt) => form.append("search_options", opt));
+    if (searchOptions?.page_limit != null)
+      form.append("page_limit", String(searchOptions.page_limit));
+    if (searchOptions?.sort_option)
+      form.append("sort_option", searchOptions.sort_option);
+    if (searchOptions?.threshold)
+      form.append("threshold", searchOptions.threshold);
+    if (videoIds && videoIds.length) {
+      for (const vid of videoIds) form.append("video_ids", vid);
+    }
 
     const response = await twelveLabsRequest("search", {
       method: "POST",
-      body: JSON.stringify(searchData),
+      body: form,
     });
 
     const searchResult = SearchResultSchema.parse(response);

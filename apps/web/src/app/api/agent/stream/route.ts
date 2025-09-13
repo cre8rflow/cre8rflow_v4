@@ -7,6 +7,8 @@ import { NextRequest } from "next/server";
 import { planInstructions } from "@/lib/planner";
 import type { AgentRequestPayload } from "@/types/agent";
 import { env } from "@/env";
+import { twelveLabsService } from "@/lib/twelvelabs-service";
+import { getMediaIndexJobs } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
@@ -52,14 +54,69 @@ export async function GET(request: NextRequest) {
 
         // Call planner (OpenAI if configured, else fallback heuristics)
         planInstructions({ prompt, metadata })
-          .then((result) => {
+          .then(async (result) => {
             if (!result.ok) {
               sseSend(controller, { event: "error", message: result.error });
               controller.close();
               return;
             }
 
-            const instructions = result.steps;
+            // Resolve TwelveLabs search steps server-side into applyCut
+            const instructions: any[] = [];
+            for (const instr of result.steps) {
+              if (instr.type === "twelvelabs.search") {
+                const query = instr.query;
+                sseSend(controller, { event: "log", message: `Calling TwelveLabs for: ${query}` });
+
+                // Check indexing readiness using Supabase (projectId from metadata)
+                const projectId = (metadata as any).projectId;
+                if (projectId) {
+                  try {
+                    const jobs = await getMediaIndexJobs(projectId);
+                    const readyCount = jobs.filter((j) => j.status === "ready").length;
+                    if (readyCount === 0) {
+                      sseSend(controller, { event: "log", message: "Still analyzing video(s). Try again after indexing completes." });
+                      // Skip this step gracefully
+                      continue;
+                    }
+                  } catch (e) {
+                    sseSend(controller, { event: "log", message: "Could not verify indexing status; proceeding to search." });
+                  }
+                }
+
+                try {
+                  const userId = "default-user";
+                  const videoIdsUsed: string[] | undefined = (metadata as any).videoIdsUsed;
+                  if (videoIdsUsed && videoIdsUsed.length) {
+                    sseSend(controller, { event: "log", message: `Restricting search to ${videoIdsUsed.length} video(s) on timeline` });
+                  }
+                  const searchResp = await twelveLabsService.searchVideos(
+                    userId,
+                    query,
+                    { page_limit: 1, threshold: "medium" },
+                    videoIdsUsed
+                  );
+                  const top = searchResp.results?.data?.[0];
+                  if (!top) {
+                    sseSend(controller, { event: "log", message: "No TwelveLabs matches found." });
+                    continue;
+                  }
+
+                  sseSend(controller, { event: "log", message: `TwelveLabs match: video=${top.video_id} ${top.start.toFixed(2)}s–${top.end.toFixed(2)}s` });
+                  instructions.push({
+                    type: "twelvelabs.applyCut",
+                    videoId: top.video_id,
+                    start: top.start,
+                    end: top.end,
+                    description: `Cut out matched content (${top.start.toFixed(2)}–${top.end.toFixed(2)}s)`,
+                  });
+                } catch (e: any) {
+                  sseSend(controller, { event: "error", message: `TwelveLabs search failed: ${e?.message || e}` });
+                }
+              } else {
+                instructions.push(instr);
+              }
+            }
 
             // Report planner source and hint if any
             sseSend(controller, { event: "log", message: `Planner source: ${result.source}` });

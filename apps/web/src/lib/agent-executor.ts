@@ -13,6 +13,7 @@ import {
 import { useTimelineStore } from "@/stores/timeline-store";
 import { toast } from "sonner";
 import { isAgentInstruction, isServerInstruction } from "@/types/agent";
+import { useMediaStore } from "@/stores/media-store";
 
 // =============================================================================
 // RESULT TYPES
@@ -69,17 +70,16 @@ export function executeInstruction({
 function executeServerInstruction({
   instruction,
 }: {
-  instruction: Extract<AnyInstruction, { type: "twelvelabs.analyze" }>;
+  instruction: Extract<AnyInstruction, { type: string }>;
 }): ExecutionOutcome {
-  // For V1, we just acknowledge server instructions
-  // In future versions, this could trigger API calls or other operations
-  console.log("Server instruction received:", instruction);
+  // Handle server-only operations that are executed on the client
+  if (instruction.type === "twelvelabs.applyCut") {
+    return executeTwelveLabsApplyCut(instruction as any);
+  }
 
-  return {
-    success: true,
-    targetsResolved: 0,
-    message: `Server instruction completed: ${instruction.type}`,
-  };
+  // For other server instructions, we just acknowledge
+  console.log("Server instruction received:", instruction);
+  return { success: true, targetsResolved: 0, message: instruction.type };
 }
 
 /**
@@ -236,6 +236,96 @@ function executeTrimInstruction({
   return {
     success: false,
     error: errorMessage,
+    targetsResolved: targets.length,
+  };
+}
+
+/**
+ * Execute a server-provided TwelveLabs applyCut instruction on matching elements.
+ * Maps source timestamps to element-relative seconds by subtracting trimStart.
+ */
+function executeTwelveLabsApplyCut(instruction: {
+  type: "twelvelabs.applyCut";
+  videoId: string;
+  start: number;
+  end: number;
+  description?: string;
+}): ExecutionOutcome {
+  const mediaFiles = useMediaStore.getState().mediaFiles;
+  const timeline = useTimelineStore.getState();
+
+  // Find mediaIds that map to this TwelveLabs video
+  const matchingMediaIds = mediaFiles
+    .filter((m) => m.twelveLabsVideoId === instruction.videoId)
+    .map((m) => m.id);
+
+  if (matchingMediaIds.length === 0) {
+    return {
+      success: false,
+      error: `No media items found for TwelveLabs video ${instruction.videoId}`,
+      targetsResolved: 0,
+    };
+  }
+
+  // Collect all matching elements across tracks
+  const targets: { trackId: string; elementId: string; trimStart: number }[] = [];
+  for (const track of timeline.tracks) {
+    for (const el of track.elements) {
+      if (el.type === "media" && matchingMediaIds.includes(el.mediaId)) {
+        targets.push({ trackId: track.id, elementId: el.id, trimStart: el.trimStart });
+      }
+    }
+  }
+
+  if (targets.length === 0) {
+    return {
+      success: false,
+      error: `No timeline elements found for TwelveLabs video ${instruction.videoId}`,
+      targetsResolved: 0,
+    };
+  }
+
+  // Single history entry for whole operation
+  timeline.pushHistory();
+
+  let successCount = 0;
+  const errors: string[] = [];
+  let totalRemovedDuration = 0;
+
+  for (const target of targets) {
+    // Adjust to element-local seconds by subtracting current trimStart
+    const localStart = instruction.start - target.trimStart;
+    const localEnd = instruction.end - target.trimStart;
+
+    const result = cutOut({
+      plan: {
+        type: "cut-out",
+        scope: "element",
+        element: { trackId: target.trackId, elementId: target.elementId },
+        range: { mode: "elementSeconds", start: localStart, end: localEnd },
+        options: { pushHistory: false, showToast: false },
+      },
+    });
+
+    if (result.success) {
+      successCount++;
+      if (result.removedDuration) totalRemovedDuration += result.removedDuration;
+    } else {
+      errors.push(result.error || `Unknown error on ${target.elementId}`);
+    }
+  }
+
+  if (successCount > 0) {
+    const msg =
+      instruction.description ||
+      `Cut out matched content (${totalRemovedDuration.toFixed(2)}s removed)`;
+    toast.success(msg);
+    return { success: true, targetsResolved: targets.length, message: msg };
+  }
+
+  return {
+    success: false,
+    error: `Failed to apply cut: ${errors.join(", ")}`,
     targetsResolved: targets.length,
   };
 }

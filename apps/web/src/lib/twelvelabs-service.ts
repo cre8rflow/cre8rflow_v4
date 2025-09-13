@@ -207,7 +207,8 @@ export class TwelveLabsService {
       page_limit?: number;
       sort_option?: "score" | "clip_count";
       threshold?: "high" | "medium" | "low";
-    }
+    },
+    videoIds?: string[]
   ): Promise<SearchVideosResponse> {
     try {
       console.log(`Searching videos for user ${userId}: "${query}"`);
@@ -221,11 +222,25 @@ export class TwelveLabsService {
         };
       }
 
-      // Search videos in index
+      // Determine supported search options from index configuration
+      const supported = new Set<string>();
+      for (const model of indexResponse.index.models || []) {
+        for (const opt of model.model_options || []) supported.add(opt);
+      }
+      const domains: ("audio" | "visual")[] = [];
+      if (supported.has("visual")) domains.push("visual");
+      if (supported.has("audio")) domains.push("audio");
+      const finalOptions = {
+        ...searchOptions,
+        search_options: domains.length ? domains : ["visual"],
+      } as any;
+
+      // Search videos in index (optionally restricted to videoIds)
       const results = await searchVideos(
         indexResponse.index._id,
         query,
-        searchOptions
+        finalOptions,
+        videoIds
       );
 
       return {

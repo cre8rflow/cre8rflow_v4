@@ -76,6 +76,9 @@ Hard rules:
 - IMPORTANT semantic mapping:
   - If the user says "trim the last N seconds" or similar (remove N seconds from the end), use {"mode":"deltaSeconds","delta":N} on the RIGHT side.
   - If the user says "trim to N seconds" or "make it N seconds long", use {"mode":"toSeconds","time":N} on the RIGHT side.
+- If the user gives a semantic description that requires understanding video content (e.g., "the man in sunglasses walking in the water"), output a server step first:
+  {"type":"twelvelabs.search","query":"<concise semantic phrase>"}.
+  Do not guess the time range; the backend will call TwelveLabs and return an applyCut step.
 - Do NOT include markdown, code fences, comments, explanations, or extra properties.
 - Keep total steps ≤ 6.
 `;
@@ -388,6 +391,10 @@ function normalizePlannedSteps(prompt: string, steps: AnyInstruction[]): AnyInst
         // Only override if planner used toSeconds incorrectly or omitted right
         if (!right || right.mode !== "deltaSeconds") {
           cloned.sides.right = { mode: "deltaSeconds", delta: lastSeconds } as any;
+        }
+        // Also ensure target is the last clip on media tracks
+        if ((cloned as any).target?.kind !== "lastClip") {
+          (cloned as any).target = { kind: "lastClip", track: "media" } as any;
         }
       }
 

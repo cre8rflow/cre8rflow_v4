@@ -48,12 +48,36 @@ export interface CutOutInstruction {
 }
 
 // Non-edit, server-side steps (extensible for future features)
-export interface ServerInstruction {
+export interface TLAnalyzeInstruction {
   type: "twelvelabs.analyze";
   videoUrl: string;
   language?: string;
   description?: string;
 }
+
+// Ask backend to search TwelveLabs for semantic query; backend will respond with applyCut
+export interface TLSearchInstruction {
+  type: "twelvelabs.search";
+  query: string;
+  // Optional hint fields
+  projectId?: string;
+  description?: string;
+}
+
+// Server-computed instruction: apply a cut based on TwelveLabs match
+export interface TLApplyCutInstruction {
+  type: "twelvelabs.applyCut";
+  videoId: string;
+  start: number; // source video start in seconds
+  end: number;   // source video end in seconds
+  description?: string;
+}
+
+// Non-edit server-side instructions
+export type ServerInstruction =
+  | TLAnalyzeInstruction
+  | TLSearchInstruction
+  | TLApplyCutInstruction;
 
 // Union types for instruction handling
 export type AgentInstruction = TrimInstruction | CutOutInstruction;
@@ -192,12 +216,27 @@ export const AgentInstructionSchema = z.union([
   CutOutInstructionSchema,
 ]);
 
-export const ServerInstructionSchema = z.object({
-  type: z.literal("twelvelabs.analyze"),
-  videoUrl: z.string().url("Must be a valid URL"),
-  language: z.string().optional(),
-  description: z.string().optional(),
-});
+export const ServerInstructionSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("twelvelabs.analyze"),
+    videoUrl: z.string().url("Must be a valid URL"),
+    language: z.string().optional(),
+    description: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("twelvelabs.search"),
+    query: z.string().min(1),
+    projectId: z.string().optional(),
+    description: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("twelvelabs.applyCut"),
+    videoId: z.string().min(1),
+    start: z.number().min(0),
+    end: z.number().min(0),
+    description: z.string().optional(),
+  }),
+]);
 
 export const AnyInstructionSchema = z.union([
   AgentInstructionSchema,
@@ -249,5 +288,9 @@ export function isAgentInstruction(
 export function isServerInstruction(
   instruction: AnyInstruction
 ): instruction is ServerInstruction {
-  return instruction.type === "twelvelabs.analyze";
+  return (
+    instruction.type === "twelvelabs.analyze" ||
+    instruction.type === "twelvelabs.search" ||
+    instruction.type === "twelvelabs.applyCut"
+  );
 }
