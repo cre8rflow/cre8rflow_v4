@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/resizable";
 import { MediaPanel } from "@/components/editor/media-panel";
 import { PropertiesPanel } from "@/components/editor/properties-panel";
+import { AgentPanel } from "@/components/editor/agent/agent-panel";
 import { Timeline } from "@/components/editor/timeline";
 import { PreviewPanel } from "@/components/editor/preview-panel";
 import { EditorHeader } from "@/components/editor/editor-header";
@@ -211,7 +212,7 @@ export default function Editor() {
                         onResize={setPropertiesPanel}
                         className="min-w-0"
                       >
-                        <PropertiesPanel />
+                        <AgentPanel />
                       </ResizablePanel>
                     </ResizablePanelGroup>
                   </ResizablePanel>
@@ -303,7 +304,7 @@ export default function Editor() {
                 onResize={setPropertiesPanel}
                 className="min-w-0 min-h-0"
               >
-                <PropertiesPanel />
+                <AgentPanel />
               </ResizablePanel>
             </ResizablePanelGroup>
           ) : activePreset === "vertical-preview" ? (
@@ -352,7 +353,7 @@ export default function Editor() {
                         onResize={setPropertiesPanel}
                         className="min-w-0"
                       >
-                        <PropertiesPanel />
+                        <AgentPanel />
                       </ResizablePanel>
                     </ResizablePanelGroup>
                   </ResizablePanel>
@@ -432,7 +433,7 @@ export default function Editor() {
                     onResize={setPropertiesPanel}
                     className="min-w-0 rounded-sm"
                   >
-                    <PropertiesPanel />
+                    <AgentPanel />
                   </ResizablePanel>
                 </ResizablePanelGroup>
               </ResizablePanel>

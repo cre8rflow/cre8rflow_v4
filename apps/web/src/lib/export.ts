@@ -45,7 +45,7 @@ async function createTimelineAudioBuffer(
   tracks: TimelineTrack[],
   mediaFiles: MediaFile[],
   duration: number,
-  sampleRate: number = 44100
+  sampleRate = 44_100
 ): Promise<AudioBuffer | null> {
   // Get Web Audio context
   const audioContext = new (

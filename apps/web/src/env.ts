@@ -29,6 +29,15 @@ export const env = createEnv({
     SUPABASE_SERVICE_KEY: z.string().optional(),
     // Twelvelabs (for V3 integration - AI video analysis)
     TWELVELABS_API_KEY: z.string().optional(),
+    // OpenAI planner (agent orchestration)
+    OPENAI_API_KEY: z.string().optional(),
+    OPENAI_MODEL: z.string().optional(),
+    OPENAI_RESP_FORMAT: z.enum(["json_object", "json_schema"]).optional(),
+    // Planner behavior
+    AGENT_PLANNER_FALLBACK: z
+      .enum(["true", "false"])
+      .optional()
+      .default("true"),
   },
   client: {},
   runtimeEnv: {
@@ -51,5 +60,10 @@ export const env = createEnv({
     SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY,
     // Twelvelabs (for V3 integration - AI video analysis)
     TWELVELABS_API_KEY: process.env.TWELVELABS_API_KEY,
+    // OpenAI planner (agent orchestration)
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    OPENAI_MODEL: process.env.OPENAI_MODEL,
+    OPENAI_RESP_FORMAT: process.env.OPENAI_RESP_FORMAT,
+    AGENT_PLANNER_FALLBACK: process.env.AGENT_PLANNER_FALLBACK,
   },
 });

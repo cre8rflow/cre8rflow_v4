@@ -184,7 +184,7 @@ export async function findExistingIndex(
  */
 export async function createUserIndex(
   indexName: string,
-  modelName: string = "marengo2.7"
+  modelName = "marengo2.7"
 ): Promise<Index> {
   console.log(`Creating new index: ${indexName} with model: ${modelName}`);
 
@@ -227,7 +227,7 @@ export async function createUserIndex(
 export async function uploadVideoToIndex(
   indexId: string,
   videoUrl: string,
-  language: string = "en"
+  language = "en"
 ): Promise<Task> {
   console.log(`Uploading video to index ${indexId}: ${videoUrl}`);
 
@@ -258,7 +258,7 @@ export async function uploadVideoToIndex(
 export async function uploadVideoFileToIndex(
   indexId: string,
   videoFile: File,
-  language: string = "en"
+  language = "en"
 ): Promise<Task> {
   console.log(`Uploading video file to index ${indexId}: ${videoFile.name}`);
 
@@ -312,7 +312,7 @@ export async function getTaskStatus(taskId: string): Promise<Task> {
 export async function analyzeVideo(
   indexId: string,
   videoUrl: string,
-  language: string = "en"
+  language = "en"
 ): Promise<Task> {
   return uploadVideoToIndex(indexId, videoUrl, language);
 }

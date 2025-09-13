@@ -12,6 +12,7 @@ import type {
   CutOutResult,
   ElementTarget,
   ElementCommandData,
+  UpdatedElement,
 } from "./types";
 import {
   isValidElementForTrim,
@@ -86,7 +87,7 @@ function applyCutOut(
   currentTime: number,
   timeline: ReturnType<typeof useTimelineStore.getState>
 ): {
-  updated?: ElementTarget[];
+  updated?: UpdatedElement[];
   deleted?: ElementTarget[];
   created?: ElementTarget[];
   removedDuration?: number;
@@ -198,14 +199,42 @@ function applyCutOut(
     timeline.removeElementFromTrackWithRipple(
       element.trackId,
       middleElement.id,
-      false // Don't push history here - managed by main function
+      false, // Don't push history here - managed by main function
+      true // Force ripple regardless of global setting
     );
+
+    // Post-ripple snap: ensure the immediate right neighbor aligns exactly to the cut start
+    // to avoid sub-frame gaps introduced by floating point rounding.
+    try {
+      const EPS_SNAP = 1e-3;
+      const SNAP_WINDOW = 0.05; // 50ms window to catch near-neighbor start times
+      const postDeleteTimeline = useTimelineStore.getState();
+      const postTrack = postDeleteTimeline.tracks.find((t) => t.id === element.trackId);
+      if (postTrack) {
+        const elementStartTime = element.startTime;
+        const neighbor = postTrack.elements
+          .filter((e) => e.startTime >= elementStartTime - EPS_SNAP)
+          .sort((a, b) => a.startTime - b.startTime)[0];
+        if (
+          neighbor &&
+          neighbor.startTime > elementStartTime + EPS_SNAP &&
+          neighbor.startTime - elementStartTime <= SNAP_WINDOW
+        ) {
+          postDeleteTimeline.updateElementStartTime(
+            element.trackId,
+            neighbor.id,
+            elementStartTime,
+            false
+          );
+        }
+      }
+    } catch {}
 
     // Collect results
     const result = {
       deleted: [{ trackId: element.trackId, elementId: middleElement.id }],
       removedDuration: cutRange.duration,
-      updated: [] as ElementTarget[],
+      updated: [] as UpdatedElement[],
       created: [] as ElementTarget[],
     };
 
@@ -219,7 +248,17 @@ function applyCutOut(
 
     // Original element (left piece) is updated if it still exists and was modified
     if (cutRange.start > 0) {
-      result.updated.push({ trackId: element.trackId, elementId: element.id });
+      const latest = useTimelineStore.getState();
+      const latestTrack = latest.tracks.find((t) => t.id === element.trackId);
+      const latestLeft = latestTrack?.elements.find((e) => e.id === element.id);
+      if (latestLeft) {
+        result.updated.push({
+          trackId: element.trackId,
+          elementId: element.id,
+          trimStart: latestLeft.trimStart,
+          trimEnd: latestLeft.trimEnd,
+        });
+      }
     }
 
     return result;
@@ -263,7 +302,7 @@ export function cutOut({ plan }: { plan: CutOutPlan }): CutOutResult {
   }
 
   // Apply cut-out to each target element
-  let totalUpdated: ElementTarget[] = [];
+  let totalUpdated: UpdatedElement[] = [];
   let totalDeleted: ElementTarget[] = [];
   let totalCreated: ElementTarget[] = [];
   let totalRemovedDuration = 0;

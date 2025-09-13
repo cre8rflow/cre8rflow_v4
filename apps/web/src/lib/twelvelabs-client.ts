@@ -107,7 +107,7 @@ export class TwelveLabsClient {
    */
   async uploadVideoFile(
     videoFile: File,
-    language: string = "en",
+    language = "en",
     options?: { projectId?: string; mediaId?: string }
   ): Promise<ClientUploadResponse> {
     try {
@@ -147,7 +147,7 @@ export class TwelveLabsClient {
    */
   async uploadVideo(
     videoUrl: string,
-    language: string = "en"
+    language = "en"
   ): Promise<ClientUploadResponse> {
     try {
       console.log("🎬 Uploading video via API:", videoUrl);
@@ -227,7 +227,7 @@ export class TwelveLabsClient {
    */
   async analyzeVideo(
     videoUrl: string,
-    language: string = "en"
+    language = "en"
   ): Promise<ClientUploadResponse> {
     return this.uploadVideo(videoUrl, language);
   }
@@ -238,8 +238,8 @@ export class TwelveLabsClient {
   async pollTaskUntilComplete(
     taskId: string,
     onProgress?: (statusUpdate: ClientStatusUpdate) => void,
-    maxAttempts: number = 60,
-    intervalMs: number = 5000,
+    maxAttempts = 60,
+    intervalMs = 5000,
     options?: { projectId?: string; mediaId?: string }
   ): Promise<ClientStatusResponse> {
     console.log(`🔄 Starting to poll task ${taskId} for completion`);
@@ -347,7 +347,7 @@ export class TwelveLabsClient {
   async startBackgroundIndexing(
     videoFile: File,
     onStatusUpdate?: (statusUpdate: ClientStatusUpdate) => void,
-    language: string = "en",
+    language = "en",
     options?: { projectId?: string; mediaId?: string }
   ): Promise<{ success: boolean; taskId?: string; error?: string }> {
     try {

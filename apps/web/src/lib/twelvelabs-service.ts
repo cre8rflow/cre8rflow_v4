@@ -86,7 +86,7 @@ export class TwelveLabsService {
   async uploadVideo(
     userId: string,
     videoUrl: string,
-    language: string = "en"
+    language = "en"
   ): Promise<UploadVideoResponse> {
     try {
       console.log(`Uploading video for user ${userId}: ${videoUrl}`);
@@ -129,7 +129,7 @@ export class TwelveLabsService {
   async uploadVideoFile(
     userId: string,
     videoFile: File,
-    language: string = "en"
+    language = "en"
   ): Promise<{ success: boolean; task?: any; error?: string }> {
     try {
       console.log(`Uploading video file for user ${userId}: ${videoFile.name}`);
@@ -191,7 +191,7 @@ export class TwelveLabsService {
   async analyzeVideo(
     userId: string,
     videoUrl: string,
-    language: string = "en"
+    language = "en"
   ): Promise<AnalyzeVideoResponse> {
     const result = await this.uploadVideo(userId, videoUrl, language);
     return result;
@@ -248,8 +248,8 @@ export class TwelveLabsService {
   async pollTaskUntilComplete(
     taskId: string,
     onProgress?: (task: Task) => void,
-    maxAttempts: number = 60,
-    intervalMs: number = 5000
+    maxAttempts = 60,
+    intervalMs = 5000
   ): Promise<TaskStatusResponse> {
     console.log(`Starting to poll task ${taskId} for completion`);
 
@@ -326,7 +326,7 @@ export class TwelveLabsService {
       status: "pending" | "processing" | "completed" | "failed";
       error?: string;
     }) => void,
-    language: string = "en"
+    language = "en"
   ): Promise<{ success: boolean; taskId?: string; error?: string }> {
     try {
       console.log(

@@ -56,7 +56,8 @@ export async function POST(request: NextRequest) {
         taskId: result.task?._id,
         message: "Video analysis initiated successfully",
       });
-    } else if (action === "search") {
+    }
+    if (action === "search") {
       if (!query) {
         console.error("❌ Query is required for search");
         return NextResponse.json(
@@ -95,16 +96,15 @@ export async function POST(request: NextRequest) {
         results: result.results,
         message: "Video search completed successfully",
       });
-    } else {
-      console.error("❌ Invalid action specified");
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Invalid action. Must be "analyze" or "search"',
-        },
-        { status: 400 }
-      );
     }
+    console.error("❌ Invalid action specified");
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Invalid action. Must be "analyze" or "search"',
+      },
+      { status: 400 }
+    );
   } catch (error) {
     console.error("❌ Twelvelabs Analyze API error:", error);
     return NextResponse.json(

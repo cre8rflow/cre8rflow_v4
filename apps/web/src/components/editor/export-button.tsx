@@ -54,7 +54,7 @@ export function ExportButton() {
             <TransitionUpIcon className="z-50" />
             <span className="text-[0.875rem] z-50">Export</span>
             <div className="absolute w-full h-full left-0 top-0 bg-linear-to-t from-white/0 to-white/50 z-10 rounded-[0.8rem] flex items-center justify-center">
-              <div className="absolute w-[calc(100%-2px)] h-[calc(100%-2px)] top-[0.08rem] bg-linear-270 from-primary to-primary/80 z-50 rounded-[0.8rem]"></div>
+              <div className="absolute w-[calc(100%-2px)] h-[calc(100%-2px)] top-[0.08rem] bg-linear-270 from-primary to-primary/80 z-50 rounded-[0.8rem]" />
             </div>
           </div>
         </button>

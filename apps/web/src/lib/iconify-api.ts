@@ -98,7 +98,7 @@ export async function getCollection(
 
 export async function searchIcons(
   query: string,
-  limit: number = 64,
+  limit = 64,
   prefixes?: string[],
   category?: string
 ): Promise<IconSearchResult> {

@@ -155,7 +155,8 @@ interface TimelineStore {
   removeElementFromTrackWithRipple: (
     trackId: string,
     elementId: string,
-    pushHistory?: boolean
+    pushHistory?: boolean,
+    forceRipple?: boolean
   ) => void;
 
   // Computed values
@@ -594,11 +595,14 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
     removeElementFromTrackWithRipple: (
       trackId,
       elementId,
-      pushHistory = true
+      pushHistory = true,
+      forceRipple = false
     ) => {
       const { _tracks, rippleEditingEnabled } = get();
 
-      if (!rippleEditingEnabled) {
+      const useRipple = forceRipple || rippleEditingEnabled;
+
+      if (!useRipple) {
         // Inline non-ripple removal logic
         if (pushHistory) get().pushHistory();
         updateTracksAndSave(
@@ -630,6 +634,12 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
         element.duration - element.trimStart - element.trimEnd;
       const elementEndTime = elementStartTime + elementDuration;
 
+      const projectFps =
+        useProjectStore.getState().activeProject?.fps ||
+        require("./project-store").DEFAULT_FPS;
+      const roundToFrame = (t: number) =>
+        Math.max(0, Math.round(t * projectFps) / projectFps);
+
       const updatedTracks = _tracks
         .map((currentTrack) => {
           const shouldApplyRipple = currentTrack.id === trackId;
@@ -649,13 +659,16 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
                 return currentElement;
               }
 
-              if (currentElement.startTime >= elementEndTime) {
+              const EPS = 1e-3;
+              if (currentElement.startTime >= elementEndTime - EPS) {
+                const isImmediateNeighbor =
+                  Math.abs(currentElement.startTime - elementEndTime) < EPS;
+                const shifted = currentElement.startTime - elementDuration;
                 return {
                   ...currentElement,
-                  startTime: Math.max(
-                    0,
-                    currentElement.startTime - elementDuration
-                  ),
+                  startTime: isImmediateNeighbor
+                    ? roundToFrame(elementStartTime)
+                    : roundToFrame(shifted),
                 };
               }
               return currentElement;

@@ -297,9 +297,8 @@ function StickersContentView({ category }: { category: StickerCategory }) {
       setShowCollectionItems(false);
       const timer = setTimeout(() => setShowCollectionItems(true), 350);
       return () => clearTimeout(timer);
-    } else {
-      setShowCollectionItems(false);
     }
+    setShowCollectionItems(false);
   }, [isInCollection]);
 
   return (
