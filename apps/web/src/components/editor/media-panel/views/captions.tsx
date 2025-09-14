@@ -66,6 +66,8 @@ export function Captions() {
       const encryptedBlob = new Blob([encryptionResult.encryptedData]);
 
       setProcessingStep("Uploading...");
+
+      // Direct browser upload via presigned URL (requires R2 CORS to be configured)
       const uploadResponse = await fetch("/api/get-upload-url", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -73,17 +75,20 @@ export function Captions() {
       });
 
       if (!uploadResponse.ok) {
-        const error = await uploadResponse.json();
+        const error = await uploadResponse.json().catch(() => ({} as any));
         throw new Error(error.message || "Failed to get upload URL");
       }
 
       const { uploadUrl, fileName } = await uploadResponse.json();
 
-      // Upload to R2
-      await fetch(uploadUrl, {
+      // Upload to R2 (no custom headers so it matches the presign)
+      const putResp = await fetch(uploadUrl, {
         method: "PUT",
         body: encryptedBlob,
       });
+      if (!putResp.ok) {
+        throw new Error(`Upload failed: ${putResp.status}`);
+      }
 
       setProcessingStep("Transcribing...");
 

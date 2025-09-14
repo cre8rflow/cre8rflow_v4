@@ -3,6 +3,16 @@ import { useTimelineStore } from "@/stores/timeline-store";
 import { useMediaStore } from "@/stores/media-store";
 import { Input, ALL_FORMATS, BlobSource, VideoSampleSink } from "mediabunny";
 
+// =============================================================================
+// Audio mixing constants (memory-friendly for browser/WASM)
+// =============================================================================
+const MIX_SAMPLE_RATE = 16_000; // 16kHz is sufficient for ASR and ~3x smaller than 44.1kHz
+const MIX_CHANNELS = 1; // mono – STT does not benefit from stereo, halves memory
+const SILENT_SAMPLE_RATE = 16_000;
+const SILENT_CHANNELS = 1;
+// Very long silent timelines produce huge WAVs. Guard to avoid WASM FS OOM.
+const MAX_SILENT_AUDIO_SECONDS = 20 * 60; // 20 minutes
+
 let ffmpeg: FFmpeg | null = null;
 
 export const initFFmpeg = async (): Promise<FFmpeg> => {
@@ -127,6 +137,7 @@ export const extractTimelineAudio = async (
   const totalDuration = timeline.getTotalDuration();
 
   if (totalDuration === 0) {
+    // Return minimal valid WAV header if no duration – avoids running ffmpeg at all
     const emptyAudioData = new ArrayBuffer(44);
     return new Blob([emptyAudioData], { type: "audio/wav" });
   }
@@ -171,8 +182,15 @@ export const extractTimelineAudio = async (
   }
 
   if (audioElements.length === 0) {
-    // Return silent audio if no audio elements
+    // Return silent audio if no audio elements – but protect against very long timelines
     const silentDuration = Math.max(1, totalDuration); // At least 1 second
+    if (silentDuration > MAX_SILENT_AUDIO_SECONDS) {
+      throw new Error(
+        `Timeline is too long (${silentDuration.toFixed(
+          1
+        )}s) to generate silent audio in-browser. Please shorten the range or split the transcript.`
+      );
+    }
     try {
       const silentAudio = await generateSilentAudio(silentDuration);
       return silentAudio;
@@ -209,15 +227,20 @@ export const extractTimelineAudio = async (
         element.duration - element.trimStart - element.trimEnd;
 
       const filterName = `audio_${i}`;
+      // Use single-value adelay with all=1 so it applies per-channel regardless of layout
+      const delayMs = Math.max(0, Math.round(element.startTime * 1000));
       filterInputs.push(
-        `[${i}:a]atrim=start=${actualStart}:duration=${actualDuration},asetpts=PTS-STARTPTS,adelay=${element.startTime * 1000}|${element.startTime * 1000}[${filterName}]`
+        `[${i}:a]atrim=start=${actualStart}:duration=${actualDuration},asetpts=PTS-STARTPTS,adelay=${delayMs}:all=1[${filterName}]`
       );
     }
 
+    const layout = MIX_CHANNELS === 1 ? "mono" : "stereo";
     const mixFilter =
       audioElements.length === 1
-        ? "[audio_0]aresample=44100,aformat=sample_fmts=s16:channel_layouts=stereo[out]"
-        : `${filterInputs.map((_, i) => `[audio_${i}]`).join("")}amix=inputs=${audioElements.length}:duration=longest:dropout_transition=2,aresample=44100,aformat=sample_fmts=s16:channel_layouts=stereo[out]`;
+        ? `[audio_0]aresample=${MIX_SAMPLE_RATE},aformat=sample_fmts=s16:channel_layouts=${layout}[out]`
+        : `${filterInputs
+            .map((_, i) => `[audio_${i}]`)
+            .join("")}amix=inputs=${audioElements.length}:duration=longest:dropout_transition=2,aresample=${MIX_SAMPLE_RATE},aformat=sample_fmts=s16:channel_layouts=${layout}[out]`;
 
     const complexFilter = [...filterInputs, mixFilter].join(";");
     const outputName = "timeline_audio.wav";
@@ -232,8 +255,10 @@ export const extractTimelineAudio = async (
       totalDuration.toString(),
       "-c:a",
       "pcm_s16le",
+      "-ac",
+      String(MIX_CHANNELS),
       "-ar",
-      "44100",
+      String(MIX_SAMPLE_RATE),
       outputName,
     ];
 
@@ -286,11 +311,13 @@ const generateSilentAudio = async (durationSeconds: number): Promise<Blob> => {
       "-f",
       "lavfi",
       "-i",
-      "anullsrc=channel_layout=stereo:sample_rate=44100",
+      `anullsrc=channel_layout=${SILENT_CHANNELS === 1 ? "mono" : "stereo"}:sample_rate=${SILENT_SAMPLE_RATE}`,
       "-t",
       durationSeconds.toString(),
       "-c:a",
       "pcm_s16le",
+      "-ac",
+      String(SILENT_CHANNELS),
       outputName,
     ]);
 

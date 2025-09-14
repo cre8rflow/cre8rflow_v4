@@ -75,7 +75,6 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.11",
     "@tailwindcss/typography": "^0.5.16",
-    "@types/bun": "latest",
     "@types/node": "^24.2.1",
     "@types/pg": "^8.15.4",
     "@types/react": "^18.2.48",
