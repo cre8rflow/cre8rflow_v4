@@ -60,6 +60,7 @@ Hard rules:
   - Trim: {"type":"trim","target":TargetSpec,"sides":{"left"?:TrimSide,"right"?:TrimSide},"options"?:TrimOptions,"description"?:string}
   - Cut-out: {"type":"cut-out","target":TargetSpec,"range":RangeSpec,"options"?:CutOutOptions,"description"?:string}
   - Captions: {"type":"captions.generate","language"?:string,"description"?:string}
+  - Deadspace: {"type":"deadspace.trim","target":TargetSpec,"language"?:string,"description"?:string}
 - TargetSpec (abstract, NO element IDs): one of
   {"kind":"clipAtPlayhead"}
   {"kind":"clipAtTime","time":number}
@@ -315,6 +316,18 @@ const plannerJsonSchema = {
               description: { type: "string" },
             },
           },
+          // Deadspace trim instruction
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["type", "target"],
+            properties: {
+              type: { const: "deadspace.trim" },
+              target: { $ref: "#/definitions/TargetSpec" },
+              language: { type: "string" },
+              description: { type: "string" },
+            },
+          },
         ],
       },
     },
@@ -396,6 +409,19 @@ function normalizePlannedSteps(prompt: string, steps: AnyInstruction[]): AnyInst
   const wantsCaptions = /(\bcaption\b|\bcaptions\b|\bsubtitle\b|\bsubtitles\b|\badd captions\b|\bcreate captions\b)/.test(lower);
   if (wantsCaptions && !steps.some((s: any) => s.type === "captions.generate")) {
     steps = [{ type: "captions.generate", language: "auto", description: "Generate captions" } as any, ...steps];
+  }
+
+  // Insert deadspace.trim if user asks to remove dead space / silence at start & end
+  const wantsDeadspace = /(dead\s*space|remove\s+silence|trim\s+silence|cut\s+silence|silence\s+(at\s+)?(start|beginning)\s*(and|\&|\+)\s*(end|finish))/i.test(lower);
+  if (wantsDeadspace && !steps.some((s: any) => s.type === "deadspace.trim")) {
+    steps = [
+      {
+        type: "deadspace.trim",
+        target: { kind: "clipsOverlappingRange", start: 0, end: 1e9, track: "media" },
+        description: "Trim dead space at start and end across media clips",
+      } as any,
+      ...steps,
+    ];
   }
 
   return steps.map((step) => {

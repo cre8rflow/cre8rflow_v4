@@ -336,3 +336,60 @@ const generateSilentAudio = async (durationSeconds: number): Promise<Blob> => {
     }
   }
 };
+
+// =============================================================================
+// ELEMENT-LOCAL AUDIO EXTRACTION (for per-clip transcription)
+// =============================================================================
+
+/**
+ * Extract mono 16k PCM WAV for a single media element region using ffmpeg.wasm
+ *
+ * @param file The source media File (video or audio)
+ * @param startSeconds Start time within the source media (seconds)
+ * @param durationSeconds Duration to extract (seconds)
+ */
+export async function extractElementAudio(
+  file: File,
+  startSeconds: number,
+  durationSeconds: number
+): Promise<Blob> {
+  const ff = new FFmpeg();
+  await ff.load();
+
+  const inputName = `el_input_${Date.now()}.${(file.name.split(".").pop() || "bin").toLowerCase()}`;
+  const outputName = `el_audio_${Date.now()}.wav`;
+
+  try {
+    await ff.writeFile(inputName, new Uint8Array(await file.arrayBuffer()));
+
+    const ss = Math.max(0, startSeconds || 0).toString();
+    const t = Math.max(0.001, durationSeconds || 0).toString();
+
+    await ff.exec([
+      "-i",
+      inputName,
+      "-vn",
+      "-ss",
+      ss,
+      "-t",
+      t,
+      "-ac",
+      "1",
+      "-ar",
+      "16000",
+      "-c:a",
+      "pcm_s16le",
+      outputName,
+    ]);
+
+    const data = await ff.readFile(outputName);
+    return new Blob([data], { type: "audio/wav" });
+  } finally {
+    try {
+      await ff.deleteFile(inputName);
+    } catch {}
+    try {
+      await ff.deleteFile(outputName);
+    } catch {}
+  }
+}

@@ -17,6 +17,7 @@ import { useMediaStore } from "@/stores/media-store";
 import { encryptWithRandomKey, arrayBufferToBase64 } from "@/lib/zk-encryption";
 import { extractTimelineAudio } from "@/lib/mediabunny-utils";
 import { DEFAULT_TEXT_ELEMENT } from "@/constants/text-constants";
+import { extractElementAudio } from "@/lib/mediabunny-utils";
 
 // =============================================================================
 // RESULT TYPES
@@ -55,6 +56,12 @@ export function executeInstruction({
     return executeCaptionsGenerateInstruction({
       language: i.language,
       description: i.description,
+    });
+  }
+  if ((instruction as any).type === "deadspace.trim") {
+    const i = instruction as any;
+    return executeDeadspaceTrimInstruction({
+      instruction: i,
     });
   }
   // Handle server-side instructions
@@ -353,6 +360,254 @@ function executeCaptionsGenerateInstruction({
 
   // Immediate response; actual work continues asynchronously
   return { success: true, targetsResolved: 0, message: description || "Captions started" };
+}
+
+// =============================================================================
+// DEADSPACE TRIM (ASYNC, PER-ELEMENT TRANSCRIPTION)
+// =============================================================================
+
+function executeDeadspaceTrimInstruction({
+  instruction,
+}: {
+  instruction: { type: "deadspace.trim"; target: any; language?: string; description?: string };
+}): ExecutionOutcome {
+  (async () => {
+    const lang = (instruction.language || "auto").toLowerCase();
+    const timeline = useTimelineStore.getState();
+    try {
+      const targets = resolveTargets(instruction.target);
+      if (targets.length === 0) {
+        toast.error(`No targets found for: ${describeTargetSpec(instruction.target)}`);
+        return;
+      }
+
+      // Single history entry for whole batch
+      timeline.pushHistory();
+
+      let successCount = 0;
+      let skippedCount = 0;
+      const errors: string[] = [];
+
+      for (const target of targets) {
+        try {
+          const fresh = useTimelineStore.getState();
+          const track = fresh.tracks.find((t) => t.id === target.trackId);
+          const element = track?.elements.find((e) => e.id === target.elementId);
+          if (!track || !element || element.type !== "media") {
+            skippedCount++;
+            continue;
+          }
+
+          const mediaStore = useMediaStore.getState();
+          const mediaFile = mediaStore.mediaFiles.find((m) => m.id === element.mediaId);
+          if (!mediaFile || !(mediaFile.type === "audio" || mediaFile.type === "video")) {
+            skippedCount++;
+            continue;
+          }
+
+          const effectiveDuration = Math.max(0, element.duration - element.trimStart - element.trimEnd);
+          if (effectiveDuration <= 0.25) {
+            // too short to process
+            skippedCount++;
+            continue;
+          }
+
+          // 1) Extract element-local audio (mono 16k)
+          const audioBlob = await extractElementAudio(
+            mediaFile.file,
+            element.trimStart,
+            effectiveDuration
+          );
+
+          // 2) Local VAD to find speech window (10 ms precision)
+          const arrayBuf = await audioBlob.arrayBuffer();
+          const AC: any = (window as any).AudioContext || (window as any).webkitAudioContext;
+          const audioCtx = new AC();
+          const audioBuffer: AudioBuffer = await audioCtx.decodeAudioData(arrayBuf.slice(0));
+          const vad = detectSpeechWindow(audioBuffer);
+
+          let earliestStart: number | null = null;
+          let latestEnd: number | null = null;
+
+          if (vad && vad.confidence >= 0.5) {
+            earliestStart = vad.start;
+            latestEnd = vad.end;
+          } else {
+            // Optional hybrid fallback: escalate to transcription only when VAD is uncertain
+            try {
+              const { encryptedData, key, iv } = await encryptWithRandomKey(arrayBuf);
+              const encryptedBlob = new Blob([encryptedData]);
+
+              const presign = await fetch("/api/get-upload-url", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ fileExtension: "wav" }),
+              });
+              if (!presign.ok) {
+                const e = await presign.json().catch(() => ({} as any));
+                throw new Error(e.message || "Failed to get upload URL");
+              }
+              const { uploadUrl, fileName } = await presign.json();
+              const put = await fetch(uploadUrl, { method: "PUT", body: encryptedBlob });
+              if (!put.ok) throw new Error(`Upload failed: ${put.status}`);
+
+              const transcribe = await fetch("/api/transcribe", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  filename: fileName,
+                  language: lang,
+                  decryptionKey: arrayBufferToBase64(key),
+                  iv: arrayBufferToBase64(iv),
+                }),
+              });
+              if (!transcribe.ok) {
+                const e = await transcribe.json().catch(() => ({} as any));
+                throw new Error(e.message || "Transcription failed");
+              }
+              const { segments } = await transcribe.json();
+              const filtered = Array.isArray(segments)
+                ? segments.filter((s: any) => {
+                    const d = (s.end ?? 0) - (s.start ?? 0);
+                    const noSpeech = typeof s.no_speech_prob === "number" ? s.no_speech_prob : 0;
+                    return d >= 0.2 && noSpeech < 0.8;
+                  })
+                : [];
+              if (filtered.length) {
+                earliestStart = Math.min(...filtered.map((s: any) => s.start ?? 0));
+                latestEnd = Math.max(...filtered.map((s: any) => s.end ?? 0));
+              }
+            } catch (e) {
+              // If fallback also fails, skip this element
+            }
+          }
+
+          if (earliestStart == null || latestEnd == null) {
+            skippedCount++;
+            continue;
+          }
+
+          // Gentle padding
+          const pad = 0.12;
+          earliestStart = Math.max(0, earliestStart - pad);
+          latestEnd = Math.min(effectiveDuration, latestEnd + pad);
+          if (latestEnd <= earliestStart) {
+            skippedCount++;
+            continue;
+          }
+
+          // Convert to absolute local times for trim command
+          const leftTime = element.trimStart + earliestStart;
+          const rightTime = element.trimStart + latestEnd;
+
+          const result = trim({
+            plan: {
+              type: "trim",
+              scope: "element",
+              element: { trackId: target.trackId, elementId: target.elementId },
+              sides: {
+                left: { mode: "toSeconds", time: leftTime },
+                right: { mode: "toSeconds", time: rightTime },
+              },
+              options: { pushHistory: false, showToast: false, clamp: true, precision: 3 },
+            },
+          });
+
+          if (result.success) successCount++;
+          else errors.push(result.error || `Trim failed on ${target.elementId}`);
+        } catch (err: any) {
+          errors.push(err?.message || String(err));
+        }
+      }
+
+      if (successCount > 0 && errors.length === 0) {
+        toast.success(`Trimmed dead space on ${successCount} clip${successCount > 1 ? "s" : ""}`);
+      } else if (successCount > 0) {
+        toast.warning(
+          `Trimmed dead space on ${successCount}, ${skippedCount} skipped, ${errors.length} errors`
+        );
+      } else {
+        toast.error(`No clips trimmed. ${skippedCount} skipped${errors.length ? ", errors occurred" : ""}`);
+      }
+    } catch (e: any) {
+      console.error("Deadspace trim failed:", e);
+      toast.error(e?.message || "Deadspace trim failed");
+    }
+  })();
+
+  return { success: true, targetsResolved: 0, message: instruction.description || "Trimming dead space…" };
+}
+
+// -----------------------------------------------------------------------------
+// Local VAD (energy-based, 10 ms frames, hysteresis)
+// -----------------------------------------------------------------------------
+function detectSpeechWindow(buffer: AudioBuffer): { start: number; end: number; confidence: number } | null {
+  const channel = buffer.getChannelData(0);
+  const sr = buffer.sampleRate || 16000;
+  const frameMs = 10; // 10 ms resolution
+  const frameLen = Math.max(1, Math.round((sr * frameMs) / 1000));
+  const totalFrames = Math.floor(channel.length / frameLen);
+  if (totalFrames < 5) return null;
+
+  const energies: number[] = new Array(totalFrames);
+  let idx = 0;
+  for (let f = 0; f < totalFrames; f++) {
+    let sum = 0;
+    const start = f * frameLen;
+    for (let i = 0; i < frameLen; i++) {
+      const s = channel[start + i] || 0;
+      sum += s * s;
+    }
+    const rms = Math.sqrt(sum / frameLen);
+    energies[idx++] = rms;
+  }
+
+  // Estimate noise floor as 20th percentile energy
+  const sorted = energies.slice().sort((a, b) => a - b);
+  const p20 = sorted[Math.floor(sorted.length * 0.2)] || 0;
+  const threshold = Math.max(0.003, p20 * 3.0); // dynamic + minimum floor
+
+  // Build active mask
+  const active = energies.map((e) => e >= threshold);
+
+  // Hysteresis: require 200 ms active to start, 150 ms inactive to end
+  const minActiveFrames = Math.max(1, Math.round(200 / frameMs));
+  const minInactiveFrames = Math.max(1, Math.round(150 / frameMs));
+
+  // Find earliest start
+  let startFrame: number | null = null;
+  let run = 0;
+  for (let f = 0; f < active.length; f++) {
+    run = active[f] ? run + 1 : 0;
+    if (run >= minActiveFrames) {
+      startFrame = f - minActiveFrames + 1;
+      break;
+    }
+  }
+  if (startFrame == null) return null;
+
+  // Find latest end
+  let endFrame: number | null = null;
+  run = 0;
+  for (let f = active.length - 1; f >= 0; f--) {
+    run = !active[f] ? run + 1 : 0;
+    if (run >= minInactiveFrames) {
+      endFrame = f + minInactiveFrames - 1;
+      break;
+    }
+  }
+  if (endFrame == null) endFrame = active.length - 1;
+
+  const startSec = (startFrame * frameLen) / sr;
+  const endSec = (Math.min(endFrame + 1, active.length) * frameLen) / sr;
+  if (endSec <= startSec) return null;
+
+  // Confidence: ratio of active frames within [startFrame, endFrame]
+  let act = 0;
+  for (let f = startFrame; f <= endFrame; f++) if (active[f]) act++;
+  const conf = act / Math.max(1, endFrame - startFrame + 1);
+
+  return { start: startSec, end: endSec, confidence: conf };
 }
 
 /**

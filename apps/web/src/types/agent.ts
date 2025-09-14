@@ -88,10 +88,19 @@ export interface CaptionsGenerateInstruction {
   description?: string;
 }
 
+// New: dead space trimming using transcription
+export interface DeadspaceTrimInstruction {
+  type: "deadspace.trim";
+  target: TargetSpec;
+  language?: string;
+  description?: string;
+}
+
 export type AnyInstruction =
   | AgentInstruction
   | ServerInstruction
-  | CaptionsGenerateInstruction;
+  | CaptionsGenerateInstruction
+  | DeadspaceTrimInstruction;
 
 // =============================================================================
 // REQUEST/RESPONSE TYPES
@@ -256,6 +265,12 @@ export const AnyInstructionSchema = z.union([
     language: z.string().optional(),
     description: z.string().optional(),
   }),
+  z.object({
+    type: z.literal("deadspace.trim"),
+    target: TargetSpecSchema,
+    language: z.string().optional(),
+    description: z.string().optional(),
+  }),
 ]);
 
 // =============================================================================
@@ -294,7 +309,12 @@ export function validateInstruction(
 export function isAgentInstruction(
   instruction: AnyInstruction
 ): instruction is AgentInstruction {
-  return instruction.type === "trim" || instruction.type === "cut-out";
+  return (
+    instruction.type === "trim" ||
+    instruction.type === "cut-out" ||
+    (instruction as any).type === "captions.generate" ||
+    (instruction as any).type === "deadspace.trim"
+  );
 }
 
 /**
