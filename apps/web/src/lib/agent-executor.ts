@@ -14,6 +14,9 @@ import { useTimelineStore } from "@/stores/timeline-store";
 import { toast } from "sonner";
 import { isAgentInstruction, isServerInstruction } from "@/types/agent";
 import { useMediaStore } from "@/stores/media-store";
+import { encryptWithRandomKey, arrayBufferToBase64 } from "@/lib/zk-encryption";
+import { extractTimelineAudio } from "@/lib/mediabunny-utils";
+import { DEFAULT_TEXT_ELEMENT } from "@/constants/text-constants";
 
 // =============================================================================
 // RESULT TYPES
@@ -46,6 +49,14 @@ export function executeInstruction({
 }: {
   instruction: AnyInstruction;
 }): ExecutionOutcome {
+  // New: handle captions generation (async) before other branches
+  if ((instruction as any).type === "captions.generate") {
+    const i = instruction as any;
+    return executeCaptionsGenerateInstruction({
+      language: i.language,
+      description: i.description,
+    });
+  }
   // Handle server-side instructions
   if (isServerInstruction(instruction)) {
     return executeServerInstruction({ instruction });
@@ -238,6 +249,110 @@ function executeTrimInstruction({
     error: errorMessage,
     targetsResolved: targets.length,
   };
+}
+
+// =============================================================================
+// CAPTIONS GENERATION (ASYNC PIPELINE)
+// =============================================================================
+
+function executeCaptionsGenerateInstruction({
+  language,
+  description,
+}: {
+  language?: string;
+  description?: string;
+}): ExecutionOutcome {
+  (async () => {
+    try {
+      toast.message(description || "Starting captions generation…");
+
+      // 1) Extract audio from current timeline
+      const audioBlob = await extractTimelineAudio();
+
+      // 2) Encrypt with zero-knowledge random key
+      const buf = await audioBlob.arrayBuffer();
+      const { encryptedData, key, iv } = await encryptWithRandomKey(buf);
+      const encryptedBlob = new Blob([encryptedData]);
+
+      // 3) Get presigned R2 URL and upload (direct browser PUT)
+      const presign = await fetch("/api/get-upload-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileExtension: "wav" }),
+      });
+      if (!presign.ok) {
+        const e = await presign.json().catch(() => ({} as any));
+        throw new Error(e.message || "Failed to get upload URL");
+      }
+      const { uploadUrl, fileName } = await presign.json();
+
+      const put = await fetch(uploadUrl, { method: "PUT", body: encryptedBlob });
+      if (!put.ok) {
+        throw new Error(`Upload failed: ${put.status}`);
+      }
+
+      // 4) Call transcription API with decryption params
+      const transcribe = await fetch("/api/transcribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: fileName,
+          language: (language || "auto").toLowerCase(),
+          decryptionKey: arrayBufferToBase64(key),
+          iv: arrayBufferToBase64(iv),
+        }),
+      });
+      if (!transcribe.ok) {
+        const e = await transcribe.json().catch(() => ({} as any));
+        throw new Error(e.message || "Transcription failed");
+      }
+      const { segments } = await transcribe.json();
+
+      // 5) Convert segments into short caption chunks
+      const shortCaptions: Array<{ text: string; startTime: number; duration: number }> = [];
+      let globalEndTime = 0;
+      for (const seg of segments || []) {
+        const text = String(seg.text || "").trim();
+        if (!text) continue;
+        const words = text.split(/\s+/);
+        const segDur = Math.max(0.001, (seg.end ?? 0) - (seg.start ?? 0));
+        const wps = words.length / segDur;
+        let chunkStart = seg.start ?? 0;
+        for (let i = 0; i < words.length; i += 3) {
+          const chunkText = words.slice(i, i + 3).join(" ");
+          const chunkDuration = Math.max(0.8, Math.ceil((3 / Math.max(wps, 0.001)) * 10) / 10);
+          let start = chunkStart;
+          if (start < globalEndTime) start = globalEndTime;
+          shortCaptions.push({ text: chunkText, startTime: start, duration: chunkDuration });
+          globalEndTime = start + chunkDuration;
+          chunkStart += chunkDuration;
+        }
+      }
+
+      const timeline = useTimelineStore.getState();
+      const trackId = timeline.insertTrackAt("text", 0);
+      timeline.pushHistory();
+      shortCaptions.forEach((cap, idx) => {
+        timeline.addElementToTrack(trackId, {
+          ...DEFAULT_TEXT_ELEMENT,
+          name: `Caption ${idx + 1}`,
+          content: cap.text,
+          duration: cap.duration,
+          startTime: cap.startTime,
+          fontSize: 65,
+          fontWeight: "bold",
+        } as any);
+      });
+
+      toast.success(`Added ${shortCaptions.length} captions`);
+    } catch (e: any) {
+      console.error("Agent captions failed:", e);
+      toast.error(e?.message || "Captions failed");
+    }
+  })();
+
+  // Immediate response; actual work continues asynchronously
+  return { success: true, targetsResolved: 0, message: description || "Captions started" };
 }
 
 /**

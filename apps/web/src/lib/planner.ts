@@ -59,6 +59,7 @@ Hard rules:
 - Each step MUST be one of:
   - Trim: {"type":"trim","target":TargetSpec,"sides":{"left"?:TrimSide,"right"?:TrimSide},"options"?:TrimOptions,"description"?:string}
   - Cut-out: {"type":"cut-out","target":TargetSpec,"range":RangeSpec,"options"?:CutOutOptions,"description"?:string}
+  - Captions: {"type":"captions.generate","language"?:string,"description"?:string}
 - TargetSpec (abstract, NO element IDs): one of
   {"kind":"clipAtPlayhead"}
   {"kind":"clipAtTime","time":number}
@@ -303,6 +304,17 @@ const plannerJsonSchema = {
               description: { type: "string" },
             },
           },
+          // Captions generation instruction
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["type"],
+            properties: {
+              type: { const: "captions.generate" },
+              language: { type: "string" },
+              description: { type: "string" },
+            },
+          },
         ],
       },
     },
@@ -379,6 +391,12 @@ function normalizePlannedSteps(prompt: string, steps: AnyInstruction[]): AnyInst
   // Extract patterns like "to 2 seconds", "make it 2s long"
   const toMatch = lower.match(/\b(?:to|make it)\s+(\d+(?:\.\d+)?)\s*(?:s|sec|secs|seconds)\b/);
   const toSeconds = toMatch ? parseFloat(toMatch[1]) : undefined;
+
+  // Insert captions.generate if the prompt clearly asks for captions/subtitles and planner omitted it
+  const wantsCaptions = /(\bcaption\b|\bcaptions\b|\bsubtitle\b|\bsubtitles\b|\badd captions\b|\bcreate captions\b)/.test(lower);
+  if (wantsCaptions && !steps.some((s: any) => s.type === "captions.generate")) {
+    steps = [{ type: "captions.generate", language: "auto", description: "Generate captions" } as any, ...steps];
+  }
 
   return steps.map((step) => {
     if (step.type === "trim") {

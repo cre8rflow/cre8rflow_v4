@@ -81,7 +81,17 @@ export type ServerInstruction =
 
 // Union types for instruction handling
 export type AgentInstruction = TrimInstruction | CutOutInstruction;
-export type AnyInstruction = AgentInstruction | ServerInstruction;
+// New: captions generation (client-side async operation)
+export interface CaptionsGenerateInstruction {
+  type: "captions.generate";
+  language?: string; // e.g., "auto", "en", "es"
+  description?: string;
+}
+
+export type AnyInstruction =
+  | AgentInstruction
+  | ServerInstruction
+  | CaptionsGenerateInstruction;
 
 // =============================================================================
 // REQUEST/RESPONSE TYPES
@@ -241,6 +251,11 @@ export const ServerInstructionSchema = z.discriminatedUnion("type", [
 export const AnyInstructionSchema = z.union([
   AgentInstructionSchema,
   ServerInstructionSchema,
+  z.object({
+    type: z.literal("captions.generate"),
+    language: z.string().optional(),
+    description: z.string().optional(),
+  }),
 ]);
 
 // =============================================================================
