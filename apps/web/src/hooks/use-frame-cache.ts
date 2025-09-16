@@ -268,7 +268,7 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
       activeProject: TProject | null,
       renderFunction: (time: number) => Promise<ImageData>,
       sceneId?: string,
-      range = 3 // seconds
+      range = 1 // seconds (tighter to reduce decoder/memory pressure)
     ) => {
       const framesToPreRender: number[] = [];
 
@@ -286,22 +286,8 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
         }
       }
 
-      // Expand to full 1-second buckets to avoid fragmented tiny cache regions
-      const secondsToPreRender = new Set<number>();
-      for (const t of framesToPreRender) {
-        secondsToPreRender.add(Math.floor(t));
-      }
-
-      const expandedTimes: number[] = [];
-      for (const s of secondsToPreRender) {
-        for (let k = 0; k < cacheResolution; k++) {
-          const t = s + k / cacheResolution;
-          if (t < 0) continue;
-          if (!isFrameCached(t, tracks, mediaFiles, activeProject, sceneId)) {
-            expandedTimes.push(t);
-          }
-        }
-      }
+      // Avoid expanding to full buckets to keep work minimal
+      const expandedTimes: number[] = framesToPreRender.slice();
 
       // Sort forward-first near currentTime to improve perceived responsiveness
       expandedTimes.sort((a, b) => {
@@ -310,8 +296,8 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
         return da - db;
       });
 
-      // Cap total scheduled renders to avoid jank (e.g., up to 90 frames)
-      const CAP = Math.max(30, Math.min(90, cacheResolution * 3));
+      // Cap total scheduled renders more aggressively to avoid jank (e.g., up to ~45 frames)
+      const CAP = Math.max(15, Math.min(45, Math.round(cacheResolution * 1.5)));
       const toSchedule = expandedTimes.slice(0, CAP);
 
       // Pre-render during idle time

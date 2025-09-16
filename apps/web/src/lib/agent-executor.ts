@@ -51,14 +51,14 @@ export function executeInstruction({
   instruction: AnyInstruction;
 }): ExecutionOutcome {
   // New: handle captions generation (async) before other branches
-  if ((instruction as any).type === "captions.generate") {
+  if (instruction.type === "captions.generate") {
     const i = instruction as any;
     return executeCaptionsGenerateInstruction({
       language: i.language,
       description: i.description,
     });
   }
-  if ((instruction as any).type === "deadspace.trim") {
+  if (instruction.type === "deadspace.trim") {
     const i = instruction as any;
     return executeDeadspaceTrimInstruction({
       instruction: i,

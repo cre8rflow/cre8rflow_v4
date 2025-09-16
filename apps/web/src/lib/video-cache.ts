@@ -7,10 +7,21 @@ import {
 } from "mediabunny";
 
 interface VideoSinkData {
-  sink: CanvasSink;
+  mediaId: string;
+  mode: "webcodecs" | "fallback";
+  sink?: CanvasSink;
   iterator: AsyncGenerator<WrappedCanvas, void, unknown> | null;
   currentFrame: WrappedCanvas | null;
   lastTime: number;
+  // Fallback state
+  fallback?: {
+    video: HTMLVideoElement;
+    objectUrl: string;
+    canvas: HTMLCanvasElement;
+    ctx: CanvasRenderingContext2D | null;
+    ready: boolean;
+    pendingSeek?: Promise<void> | null;
+  };
 }
 export class VideoCache {
   private sinks = new Map<string, VideoSinkData>();
@@ -25,6 +36,10 @@ export class VideoCache {
 
     const sinkData = this.sinks.get(mediaId);
     if (!sinkData) return null;
+
+    if (sinkData.mode === "fallback") {
+      return (await this.getFallbackFrame(sinkData, file, time)) as any;
+    }
 
     if (
       sinkData.currentFrame &&
@@ -49,6 +64,13 @@ export class VideoCache {
   private isFrameValid(frame: WrappedCanvas, time: number): boolean {
     return time >= frame.timestamp && time < frame.timestamp + frame.duration;
   }
+
+  private closeFrame(frame: any) {
+    try {
+      if (frame && typeof frame.close === "function") frame.close();
+    } catch {}
+  }
+
   private async iterateToTime(
     sinkData: VideoSinkData,
     targetTime: number
@@ -61,6 +83,10 @@ export class VideoCache {
 
         if (done || !frame) break;
 
+        // Close previous frame to avoid GPU/CPU buffer leaks
+        if (sinkData.currentFrame && sinkData.currentFrame !== frame) {
+          this.closeFrame(sinkData.currentFrame);
+        }
         sinkData.currentFrame = frame;
         sinkData.lastTime = frame.timestamp;
 
@@ -70,9 +96,18 @@ export class VideoCache {
 
         if (frame.timestamp > targetTime + 1.0) break;
       }
-    } catch (error) {
+    } catch (error: any) {
       console.warn("Iterator failed, will restart:", error);
       sinkData.iterator = null;
+      // Switch to fallback if config unsupported
+      if (
+        error &&
+        typeof error.message === "string" &&
+        error.message.includes("Unsupported configuration")
+      ) {
+        await this.enableFallback(sinkData, targetTime, file);
+        return (await this.getFallbackFrame(sinkData, undefined as any, targetTime)) as any;
+      }
     }
 
     return null;
@@ -87,17 +122,29 @@ export class VideoCache {
         sinkData.iterator = null;
       }
 
+      if (!sinkData.sink) throw new Error("CanvasSink not initialized");
       sinkData.iterator = sinkData.sink.canvases(time);
       sinkData.lastTime = time;
 
       const { value: frame } = await sinkData.iterator.next();
 
       if (frame) {
+        if (sinkData.currentFrame && sinkData.currentFrame !== frame) {
+          this.closeFrame(sinkData.currentFrame);
+        }
         sinkData.currentFrame = frame;
         return frame;
       }
-    } catch (error) {
+    } catch (error: any) {
       console.warn("Failed to seek video:", error);
+      if (
+        error &&
+        typeof error.message === "string" &&
+        error.message.includes("Unsupported configuration")
+      ) {
+        await this.enableFallback(sinkData, time, undefined as any);
+        return (await this.getFallbackFrame(sinkData, undefined as any, time)) as any;
+      }
     }
 
     return null;
@@ -132,20 +179,35 @@ export class VideoCache {
       }
 
       const canDecode = await videoTrack.canDecode();
-      if (!canDecode) {
-        throw new Error("Video codec not supported for decoding");
+      if (canDecode) {
+        try {
+          const sink = new CanvasSink(videoTrack, {
+            poolSize: 2,
+            fit: "contain",
+          });
+          this.sinks.set(mediaId, {
+            mediaId,
+            mode: "webcodecs",
+            sink,
+            iterator: null,
+            currentFrame: null,
+            lastTime: -1,
+          });
+          return;
+        } catch (e) {
+          console.warn("CanvasSink configure failed, falling back:", e);
+          // Fall through to fallback
+        }
       }
-
-      const sink = new CanvasSink(videoTrack, {
-        poolSize: 3,
-        fit: "contain",
-      });
-
+      // Fallback path: <video> + canvas
+      const fallback = await this.createFallback(file);
       this.sinks.set(mediaId, {
-        sink,
+        mediaId,
+        mode: "fallback",
         iterator: null,
         currentFrame: null,
         lastTime: -1,
+        fallback,
       });
     } catch (error) {
       console.error(`Failed to initialize video sink for ${mediaId}:`, error);
@@ -158,6 +220,14 @@ export class VideoCache {
     if (sinkData) {
       if (sinkData.iterator) {
         sinkData.iterator.return();
+      }
+      if (sinkData.currentFrame) {
+        this.closeFrame(sinkData.currentFrame);
+      }
+      if (sinkData.fallback) {
+        try { sinkData.fallback.video.pause(); } catch {}
+        try { sinkData.fallback.video.src = ""; } catch {}
+        try { URL.revokeObjectURL(sinkData.fallback.objectUrl); } catch {}
       }
 
       this.sinks.delete(mediaId);
@@ -181,6 +251,97 @@ export class VideoCache {
         (s) => s.currentFrame
       ).length,
     };
+  }
+
+  // ---------------------- FALLBACK HELPERS ----------------------
+  private async enableFallback(
+    sinkData: VideoSinkData,
+    time: number,
+    file: File
+  ) {
+    if (sinkData.mode === "fallback" && sinkData.fallback) return;
+    const fb = await this.createFallback(file);
+    sinkData.mode = "fallback";
+    sinkData.fallback = fb;
+  }
+
+  private async createFallback(file: File) {
+    const objectUrl = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    video.preload = "auto";
+    video.muted = true;
+    video.src = objectUrl;
+
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+
+    const ready = await new Promise<boolean>((resolve) => {
+      const onLoaded = () => resolve(true);
+      const onErr = () => resolve(false);
+      video.addEventListener("loadedmetadata", onLoaded, { once: true });
+      video.addEventListener("error", onErr, { once: true });
+    });
+
+    if (ready) {
+      // Limit fallback canvas size to reduce RAM (e.g., cap longest side to 1280)
+      const w = Math.max(1, video.videoWidth || 640);
+      const h = Math.max(1, video.videoHeight || 360);
+      const cap = 1280;
+      const scale = Math.min(1, cap / Math.max(w, h));
+      canvas.width = Math.max(1, Math.round(w * scale));
+      canvas.height = Math.max(1, Math.round(h * scale));
+    } else {
+      canvas.width = 640;
+      canvas.height = 360;
+    }
+
+    return { video, objectUrl, canvas, ctx, ready };
+  }
+
+  private async getFallbackFrame(
+    sinkData: VideoSinkData,
+    _file: File,
+    time: number
+  ): Promise<{ canvas: HTMLCanvasElement; timestamp: number; duration: number } | null> {
+    if (!sinkData.fallback) return null;
+    const fb = sinkData.fallback;
+    if (!fb.ready) return null;
+
+    // Coalesce seeks
+    if (!fb.pendingSeek) {
+      fb.pendingSeek = new Promise<void>((resolve) => {
+        const onSeeked = () => {
+          fb.video.removeEventListener("seeked", onSeeked);
+          resolve();
+        };
+        fb.video.addEventListener("seeked", onSeeked);
+        try {
+          fb.video.currentTime = Math.max(0, time);
+        } catch {
+          // Some browsers throw if we set out-of-range; clamp silently
+          fb.video.currentTime = 0;
+        }
+      }).finally(() => {
+        fb.pendingSeek = null;
+      });
+    }
+    try {
+      await fb.pendingSeek;
+    } catch {}
+
+    if (fb.ctx) {
+      try {
+        fb.ctx.drawImage(fb.video, 0, 0, fb.canvas.width, fb.canvas.height);
+      } catch (e) {
+        // drawImage can fail transiently; return null to skip frame
+        return null;
+      }
+    }
+    return {
+      canvas: fb.canvas,
+      timestamp: time,
+      duration: 1 / 30,
+    } as any;
   }
 }
 export const videoCache = new VideoCache();
