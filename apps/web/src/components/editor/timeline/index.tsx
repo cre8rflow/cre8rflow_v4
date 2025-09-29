@@ -405,6 +405,18 @@ export function Timeline() {
     setDuration(Math.max(totalDuration, 10)); // Minimum 10 seconds for empty timeline
   }, [tracks, setDuration, getTotalDuration]);
 
+  useEffect(() => {
+    const totalDuration = getTotalDuration();
+    const effectiveDuration = totalDuration > 0 ? totalDuration : duration;
+    const projectFps = activeProject?.fps ?? DEFAULT_FPS;
+    const frameOffset = 1 / projectFps;
+    const maxTime = Math.max(0, effectiveDuration - frameOffset);
+
+    if (currentTime > maxTime) {
+      seek(maxTime);
+    }
+  }, [tracks, currentTime, duration, seek, getTotalDuration, activeProject?.fps]);
+
   // Old marquee system removed - using new SelectionBox component instead
 
   const handleDragEnter = (e: React.DragEvent) => {
@@ -599,21 +611,22 @@ export function Timeline() {
   }, []);
 
   return (
-    <div
-      className={
-        "h-full flex flex-col transition-colors duration-200 relative bg-panel rounded-sm overflow-hidden"
-      }
-      {...dragProps}
-      onMouseEnter={() => setIsInTimeline(true)}
-      onMouseLeave={() => setIsInTimeline(false)}
-    >
+    <div className="flex h-full flex-col gap-3 rounded-3xl border border-border/40 bg-surface-elevated/95 p-4 shadow-soft">
       <TimelineToolbar zoomLevel={zoomLevel} setZoomLevel={setZoomLevel} />
 
-      {/* Timeline Container */}
       <div
-        className="flex-1 flex flex-col overflow-hidden relative"
-        ref={timelineRef}
+        className="relative flex-1 overflow-hidden rounded-2xl border border-border/30 bg-surface-base/70"
+        {...dragProps}
+        onMouseEnter={() => setIsInTimeline(true)}
+        onMouseLeave={() => setIsInTimeline(false)}
       >
+        {isDragOver && (
+          <div className="pointer-events-none absolute inset-0 z-20 rounded-2xl border-2 border-primary/50 bg-primary/10 backdrop-blur-sm" />
+        )}
+        <div
+          className="flex h-full flex-col overflow-hidden relative"
+          ref={timelineRef}
+        >
         <TimelinePlayhead
           currentTime={currentTime}
           duration={duration}
@@ -640,9 +653,9 @@ export function Timeline() {
           isVisible={showSnapIndicator}
         />
         {/* Timeline Header with Ruler */}
-        <div className="flex bg-panel sticky top-0 z-10">
+        <div className="sticky top-0 z-10 flex bg-surface-elevated/80">
           {/* Track Labels Header */}
-          <div className="w-28 shrink-0 bg-panel border-r flex items-center justify-between px-3 py-2">
+          <div className="flex w-28 shrink-0 items-center justify-between border-r border-border/20 bg-surface-elevated/70 px-3 py-2">
             {/* Empty space */}
             <span className="text-sm font-medium text-muted-foreground opacity-0">
               .
@@ -651,7 +664,7 @@ export function Timeline() {
 
           {/* Timeline Ruler */}
           <div
-            className="flex-1 relative overflow-hidden h-10"
+            className="relative h-10 flex-1 overflow-hidden"
             onWheel={(e) => {
               // Check if this is horizontal scrolling - if so, don't handle it here
               if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
@@ -765,18 +778,18 @@ export function Timeline() {
           {tracks.length > 0 && (
             <div
               ref={trackLabelsRef}
-              className="w-28 shrink-0 border-r overflow-y-auto z-100 bg-panel"
+              className="z-100 w-28 shrink-0 overflow-y-auto border-r border-border/20 bg-surface-elevated/70"
               data-track-labels
             >
               <ScrollArea className="w-full h-full" ref={trackLabelsScrollRef}>
-                <div className="flex flex-col gap-1">
+                <div className="flex flex-col gap-1 py-2">
                   {tracks.map((track) => (
                     <div
                       key={track.id}
-                      className="flex items-center px-3 group"
+                      className="group flex items-center px-3"
                       style={{ height: `${getTrackHeight(track.type)}px` }}
                     >
-                      <div className="flex items-center justify-end flex-1 min-w-0 gap-2">
+                      <div className="flex min-w-0 flex-1 items-center justify-end gap-2 text-xs text-muted-foreground">
                         {track.muted ? (
                           <VolumeOff
                             className="h-4 w-4 text-destructive cursor-pointer"
@@ -854,7 +867,7 @@ export function Timeline() {
                       <ContextMenu key={track.id}>
                         <ContextMenuTrigger asChild>
                           <div
-                            className="absolute left-0 right-0"
+                            className="absolute left-0 right-0 px-3"
                             style={{
                               top: `${getCumulativeHeightBefore(
                                 tracks,
@@ -905,7 +918,8 @@ export function Timeline() {
         </div>
       </div>
     </div>
-  );
+  </div>
+);
 }
 
 function TrackIcon({ track }: { track: TimelineTrack }) {

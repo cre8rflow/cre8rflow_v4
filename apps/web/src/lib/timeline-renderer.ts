@@ -286,4 +286,10 @@ export async function renderTimelineFrame({
       ctx.restore();
     }
   }
+
+  for (const [mediaId, frame] of framesByMediaId) {
+    if (frame) {
+      videoCache.releaseFrame(mediaId, frame);
+    }
+  }
 }

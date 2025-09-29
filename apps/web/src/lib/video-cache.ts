@@ -26,6 +26,7 @@ interface VideoSinkData {
 export class VideoCache {
   private sinks = new Map<string, VideoSinkData>();
   private initPromises = new Map<string, Promise<void>>();
+  private unsupportedWebCodecs = new Set<string>();
 
   async getFrameAt(
     mediaId: string,
@@ -54,11 +55,11 @@ export class VideoCache {
       time >= sinkData.lastTime &&
       time < sinkData.lastTime + 2.0
     ) {
-      const frame = await this.iterateToTime(sinkData, time);
+      const frame = await this.iterateToTime(sinkData, time, file);
       if (frame) return frame;
     }
 
-    return await this.seekToTime(sinkData, time);
+    return await this.seekToTime(sinkData, time, file);
   }
 
   private isFrameValid(frame: WrappedCanvas, time: number): boolean {
@@ -73,7 +74,8 @@ export class VideoCache {
 
   private async iterateToTime(
     sinkData: VideoSinkData,
-    targetTime: number
+    targetTime: number,
+    file: File
   ): Promise<WrappedCanvas | null> {
     if (!sinkData.iterator) return null;
 
@@ -106,7 +108,7 @@ export class VideoCache {
         error.message.includes("Unsupported configuration")
       ) {
         await this.enableFallback(sinkData, targetTime, file);
-        return (await this.getFallbackFrame(sinkData, undefined as any, targetTime)) as any;
+        return (await this.getFallbackFrame(sinkData, file, targetTime)) as any;
       }
     }
 
@@ -114,7 +116,8 @@ export class VideoCache {
   }
   private async seekToTime(
     sinkData: VideoSinkData,
-    time: number
+    time: number,
+    file: File
   ): Promise<WrappedCanvas | null> {
     try {
       if (sinkData.iterator) {
@@ -142,8 +145,8 @@ export class VideoCache {
         typeof error.message === "string" &&
         error.message.includes("Unsupported configuration")
       ) {
-        await this.enableFallback(sinkData, time, undefined as any);
-        return (await this.getFallbackFrame(sinkData, undefined as any, time)) as any;
+        await this.enableFallback(sinkData, time, file);
+        return (await this.getFallbackFrame(sinkData, file, time)) as any;
       }
     }
 
@@ -168,6 +171,8 @@ export class VideoCache {
   }
   private async initializeSink(mediaId: string, file: File): Promise<void> {
     try {
+      const forceFallback = this.unsupportedWebCodecs.has(mediaId);
+
       const input = new Input({
         source: new BlobSource(file),
         formats: ALL_FORMATS,
@@ -178,7 +183,7 @@ export class VideoCache {
         throw new Error("No video track found");
       }
 
-      const canDecode = await videoTrack.canDecode();
+      const canDecode = !forceFallback && (await videoTrack.canDecode());
       if (canDecode) {
         try {
           const sink = new CanvasSink(videoTrack, {
@@ -196,8 +201,12 @@ export class VideoCache {
           return;
         } catch (e) {
           console.warn("CanvasSink configure failed, falling back:", e);
+          this.unsupportedWebCodecs.add(mediaId);
           // Fall through to fallback
         }
+      }
+      if (!canDecode) {
+        this.unsupportedWebCodecs.add(mediaId);
       }
       // Fallback path: <video> + canvas
       const fallback = await this.createFallback(file);
@@ -242,6 +251,21 @@ export class VideoCache {
     }
   }
 
+  releaseFrame(mediaId: string, frame: WrappedCanvas | null): void {
+    if (!frame) return;
+    const sinkData = this.sinks.get(mediaId);
+    if (!sinkData) {
+      this.closeFrame(frame);
+      return;
+    }
+
+    if (sinkData.currentFrame === frame) {
+      sinkData.currentFrame = null;
+    }
+
+    this.closeFrame(frame);
+  }
+
   getStats() {
     return {
       totalSinks: this.sinks.size,
@@ -260,6 +284,25 @@ export class VideoCache {
     file: File
   ) {
     if (sinkData.mode === "fallback" && sinkData.fallback) return;
+
+    try {
+      if (sinkData.iterator) {
+        await sinkData.iterator.return();
+      }
+    } catch {}
+
+    sinkData.iterator = null;
+
+    if (sinkData.currentFrame) {
+      this.closeFrame(sinkData.currentFrame);
+      sinkData.currentFrame = null;
+    }
+
+    sinkData.lastTime = -1;
+    sinkData.sink = undefined;
+
+    this.unsupportedWebCodecs.add(sinkData.mediaId);
+
     const fb = await this.createFallback(file);
     sinkData.mode = "fallback";
     sinkData.fallback = fb;

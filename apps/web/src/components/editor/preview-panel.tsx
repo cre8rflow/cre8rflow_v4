@@ -7,7 +7,16 @@ import { MediaFile } from "@/types/media";
 import { usePlaybackStore } from "@/stores/playback-store";
 import { useEditorStore } from "@/stores/editor-store";
 import { Button } from "@/components/ui/button";
-import { Play, Pause, Expand, SkipBack, SkipForward } from "lucide-react";
+import {
+  Play,
+  Pause,
+  Expand,
+  SkipBack,
+  SkipForward,
+  Loader2,
+  CheckCircle2,
+  AlertTriangle,
+} from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { renderTimelineFrame } from "@/lib/timeline-renderer";
 import { cn } from "@/lib/utils";
@@ -31,6 +40,7 @@ import { LayoutGuideOverlay } from "./layout-guide-overlay";
 import { Label } from "../ui/label";
 import { SocialsIcon } from "../icons";
 import { PLATFORM_LAYOUTS, type PlatformLayout } from "@/stores/editor-store";
+import { useAgentUIStore, type AgentRunStatus } from "@/stores/agent-ui-store";
 
 interface ActiveElement {
   element: TimelineElement;
@@ -47,8 +57,6 @@ export function PreviewPanel() {
   const { currentScene } = useSceneStore();
   const previewRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { getCachedFrame, cacheFrame, invalidateCache, preRenderNearbyFrames } =
-    useFrameCache();
   const lastFrameTimeRef = useRef(0);
   const renderSeqRef = useRef(0);
   const offscreenCanvasRef = useRef<OffscreenCanvas | HTMLCanvasElement | null>(
@@ -67,6 +75,16 @@ export function PreviewPanel() {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const canvasSize = activeProject?.canvasSize || DEFAULT_CANVAS_SIZE;
+  const projectFps = activeProject?.fps || DEFAULT_FPS;
+  const {
+    getCachedFrame,
+    cacheFrame,
+    invalidateCache,
+    preRenderNearbyFrames,
+  } = useFrameCache({
+    maxCacheSize: 90,
+    cacheResolution: Math.min(projectFps, 30),
+  });
   const [dragState, setDragState] = useState<TextElementDragState>({
     isDragging: false,
     elementId: null,
@@ -220,6 +238,33 @@ export function PreviewPanel() {
       document.body.style.userSelect = "";
     };
   }, [dragState, previewDimensions, canvasSize, updateTextElement]);
+
+  useEffect(() => {
+    if (isPlaying) {
+      invalidateCache();
+    }
+  }, [isPlaying, invalidateCache]);
+
+  const prevPreviewSizeRef = useRef<{ width: number; height: number } | null>(
+    null
+  );
+  useEffect(() => {
+    const prev = prevPreviewSizeRef.current;
+    const roundedWidth = Math.round(previewDimensions.width);
+    const roundedHeight = Math.round(previewDimensions.height);
+    if (
+      prev &&
+      Math.round(prev.width) === roundedWidth &&
+      Math.round(prev.height) === roundedHeight
+    ) {
+      return;
+    }
+    prevPreviewSizeRef.current = {
+      width: previewDimensions.width,
+      height: previewDimensions.height,
+    };
+    invalidateCache();
+  }, [previewDimensions.width, previewDimensions.height, invalidateCache]);
 
   // Clear the frame cache when background settings change since they affect rendering
   useEffect(() => {
@@ -491,90 +536,55 @@ export function PreviewPanel() {
         lastFrameTimeRef.current = currentTime;
       }
 
-      const cachedFrame = getCachedFrame(
-        currentTime,
-        tracks,
-        mediaFiles,
-        activeProject,
-        currentScene?.id
-      );
-      if (cachedFrame) {
+      const shouldUseCache = !isPlaying;
+      const cachedFrame = shouldUseCache
+        ? getCachedFrame(
+            currentTime,
+            tracks,
+            mediaFiles,
+            activeProject,
+            currentScene?.id
+          )
+        : null;
+
+      if (shouldUseCache && cachedFrame) {
         mainCtx.putImageData(cachedFrame, 0, 0);
 
-        // Pre-render nearby frames in background
-        if (isPlaying) {
-          // Small lookahead while playing
-          preRenderNearbyFrames(
-            currentTime,
-            tracks,
-            mediaFiles,
-            activeProject,
-            async (time: number) => {
-              const tempCanvas = document.createElement("canvas");
-              tempCanvas.width = displayWidth;
-              tempCanvas.height = displayHeight;
-              const tempCtx = tempCanvas.getContext("2d");
-              if (!tempCtx)
-                throw new Error("Failed to create temp canvas context");
+        preRenderNearbyFrames(
+          currentTime,
+          tracks,
+          mediaFiles,
+          activeProject,
+          async (time: number) => {
+            const tempCanvas = document.createElement("canvas");
+            tempCanvas.width = displayWidth;
+            tempCanvas.height = displayHeight;
+            const tempCtx = tempCanvas.getContext("2d");
+            if (!tempCtx) {
+              throw new Error("Failed to create temp canvas context");
+            }
 
-              await renderTimelineFrame({
-                ctx: tempCtx,
-                time,
-                canvasWidth: displayWidth,
-                canvasHeight: displayHeight,
-                tracks,
-                mediaFiles,
-                backgroundType: activeProject?.backgroundType,
-                blurIntensity: activeProject?.blurIntensity,
-                backgroundColor:
-                  activeProject?.backgroundType === "blur"
-                    ? undefined
-                    : activeProject?.backgroundColor || "#000000",
-                projectCanvasSize: canvasSize,
-              });
+            await renderTimelineFrame({
+              ctx: tempCtx,
+              time,
+              canvasWidth: displayWidth,
+              canvasHeight: displayHeight,
+              tracks,
+              mediaFiles,
+              backgroundType: activeProject?.backgroundType,
+              blurIntensity: activeProject?.blurIntensity,
+              backgroundColor:
+                activeProject?.backgroundType === "blur"
+                  ? undefined
+                  : activeProject?.backgroundColor || "#000000",
+              projectCanvasSize: canvasSize,
+            });
 
-              return tempCtx.getImageData(0, 0, displayWidth, displayHeight);
-            },
-            currentScene?.id,
-            1
-          );
-        } else {
-          // Only during scrubbing to avoid interfering with playback
-          preRenderNearbyFrames(
-            currentTime,
-            tracks,
-            mediaFiles,
-            activeProject,
-            async (time: number) => {
-              const tempCanvas = document.createElement("canvas");
-              tempCanvas.width = displayWidth;
-              tempCanvas.height = displayHeight;
-              const tempCtx = tempCanvas.getContext("2d");
-              if (!tempCtx)
-                throw new Error("Failed to create temp canvas context");
-
-              await renderTimelineFrame({
-                ctx: tempCtx,
-                time,
-                canvasWidth: displayWidth,
-                canvasHeight: displayHeight,
-                tracks,
-                mediaFiles,
-                backgroundType: activeProject?.backgroundType,
-                blurIntensity: activeProject?.blurIntensity,
-                backgroundColor:
-                  activeProject?.backgroundType === "blur"
-                    ? undefined
-                    : activeProject?.backgroundColor || "#000000",
-                projectCanvasSize: canvasSize,
-              });
-
-              return tempCtx.getImageData(0, 0, displayWidth, displayHeight);
-            },
-            currentScene?.id,
-            3
-          );
-        }
+            return tempCtx.getImageData(0, 0, displayWidth, displayHeight);
+          },
+          currentScene?.id,
+          0.75
+        );
         return;
       }
 
@@ -649,14 +659,52 @@ export function PreviewPanel() {
         displayWidth,
         displayHeight
       );
-      cacheFrame(
-        currentTime,
-        imageData,
-        tracks,
-        mediaFiles,
-        activeProject,
-        currentScene?.id
-      );
+      if (shouldUseCache) {
+        cacheFrame(
+          currentTime,
+          imageData,
+          tracks,
+          mediaFiles,
+          activeProject,
+          currentScene?.id
+        );
+
+        preRenderNearbyFrames(
+          currentTime,
+          tracks,
+          mediaFiles,
+          activeProject,
+          async (time: number) => {
+            const tempCanvas = document.createElement("canvas");
+            tempCanvas.width = displayWidth;
+            tempCanvas.height = displayHeight;
+            const tempCtx = tempCanvas.getContext("2d");
+            if (!tempCtx) {
+              throw new Error("Failed to create temp canvas context");
+            }
+
+            await renderTimelineFrame({
+              ctx: tempCtx,
+              time,
+              canvasWidth: displayWidth,
+              canvasHeight: displayHeight,
+              tracks,
+              mediaFiles,
+              backgroundType: activeProject?.backgroundType,
+              blurIntensity: activeProject?.blurIntensity,
+              backgroundColor:
+                activeProject?.backgroundType === "blur"
+                  ? undefined
+                  : activeProject?.backgroundColor || "#000000",
+              projectCanvasSize: canvasSize,
+            });
+
+            return tempCtx.getImageData(0, 0, displayWidth, displayHeight);
+          },
+          currentScene?.id,
+          0.75
+        );
+      }
 
       // Blit offscreen to visible canvas
       mainCtx.clearRect(0, 0, displayWidth, displayHeight);
@@ -706,59 +754,73 @@ export function PreviewPanel() {
   // Render an element (canvas handles visuals now). Audio playback to be implemented via Web Audio.
   const renderElement = (_elementData: ActiveElement) => null;
 
+  const {
+    status: agentStatus,
+    message: agentMessage,
+    lastPrompt: agentPrompt,
+  } = useAgentUIStore();
+
   return (
     <>
-      <div className="h-full w-full flex flex-col min-h-0 min-w-0 bg-panel rounded-sm relative">
+      <div className="flex h-full flex-col rounded-3xl border border-border/40 bg-surface-elevated/95 shadow-soft overflow-hidden">
         <div
           ref={containerRef}
-          className="flex-1 flex flex-col items-center justify-center min-h-0 min-w-0"
+          className="flex flex-1 min-h-0 flex-col"
         >
-          <div className="flex-1" />
-          {shouldRenderPreview ? (
-            <div
-              ref={previewRef}
-              className="relative overflow-hidden border"
-              style={{
-                width: previewDimensions.width,
-                height: previewDimensions.height,
-                background:
-                  activeProject?.backgroundType === "blur"
-                    ? "transparent"
-                    : activeProject?.backgroundColor || "#000000",
-              }}
-            >
-              {renderBlurBackground()}
-              <canvas
-                ref={canvasRef}
+          <div className="flex flex-1 items-center justify-center">
+            {shouldRenderPreview ? (
+              <div
+                ref={previewRef}
+                className="relative h-full w-full max-h-full max-w-full overflow-hidden bg-black"
                 style={{
-                  position: "absolute",
-                  left: 0,
-                  top: 0,
                   width: previewDimensions.width,
                   height: previewDimensions.height,
+                  background:
+                    activeProject?.backgroundType === "blur"
+                      ? "transparent"
+                      : activeProject?.backgroundColor || "#000000",
                 }}
-                aria-label="Video preview canvas"
-              />
-              {activeElements.length === 0 ? (
-                <></>
-              ) : (
-                activeElements.map((elementData) => renderElement(elementData))
-              )}
-              <LayoutGuideOverlay />
-            </div>
-          ) : null}
+              >
+                {renderBlurBackground()}
+                <canvas
+                  ref={canvasRef}
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    top: 0,
+                    width: previewDimensions.width,
+                    height: previewDimensions.height,
+                  }}
+                  aria-label="Video preview canvas"
+                />
+                {activeElements.length === 0
+                  ? null
+                  : activeElements.map((elementData) => renderElement(elementData))}
+                <LayoutGuideOverlay />
+                <CommandStatusOverlay
+                  status={agentStatus}
+                  message={agentMessage}
+                  prompt={agentPrompt}
+                />
+              </div>
+            ) : (
+              <div className="flex h-full w-full items-center justify-center rounded-3xl border border-dashed border-border/40 bg-surface-base/60 text-sm text-muted-foreground">
+                Add media to see the preview.
+              </div>
+            )}
+          </div>
 
-          <div className="flex-1" />
-
-          <PreviewToolbar
-            hasAnyElements={hasAnyElements}
-            onToggleExpanded={toggleExpanded}
-            isExpanded={isExpanded}
-            currentTime={currentTime}
-            setCurrentTime={setCurrentTime}
-            toggle={toggle}
-            getTotalDuration={getTotalDuration}
-          />
+          <div className="px-4 pb-4">
+            <PreviewToolbar
+              hasAnyElements={hasAnyElements}
+              onToggleExpanded={toggleExpanded}
+              isExpanded={isExpanded}
+              currentTime={currentTime}
+              setCurrentTime={setCurrentTime}
+              toggle={toggle}
+              getTotalDuration={getTotalDuration}
+            />
+          </div>
         </div>
       </div>
 
@@ -779,6 +841,68 @@ export function PreviewPanel() {
         />
       )}
     </>
+  );
+}
+
+function getAgentStatusMeta(status: AgentRunStatus) {
+  switch (status) {
+    case "running":
+      return {
+        label: "Processing",
+        badgeClass: "border-primary/40 text-primary",
+        icon: <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />,
+      };
+    case "completed":
+      return {
+        label: "Command complete",
+        badgeClass: "border-emerald-500/40 text-emerald-400",
+        icon: <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />,
+      };
+    case "error":
+      return {
+        label: "Command error",
+        badgeClass: "border-red-500/40 text-red-400",
+        icon: <AlertTriangle className="h-3.5 w-3.5 text-red-400" />,
+      };
+    default:
+      return {
+        label: "Idle",
+        badgeClass: "border-border/40 text-muted-foreground",
+        icon: null,
+      };
+  }
+}
+
+function CommandStatusOverlay({
+  status,
+  message,
+  prompt,
+}: {
+  status: AgentRunStatus;
+  message: string | null;
+  prompt: string | null;
+}) {
+  if (status === "idle") {
+    return null;
+  }
+
+  const meta = getAgentStatusMeta(status);
+
+  return (
+    <div className="pointer-events-none absolute left-4 bottom-4 z-20 flex max-w-sm flex-col gap-2 rounded-2xl border border-border/40 bg-surface-base/85 px-4 py-3 text-sm text-foreground shadow-soft backdrop-blur">
+      <div className="flex items-center gap-2">
+        {meta.icon}
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {meta.label}
+          </p>
+          {prompt ? <p className="text-sm font-semibold text-foreground">{prompt}</p> : null}
+        </div>
+      </div>
+      {message ? (
+        <p className="text-xs text-muted-foreground/80">{message}</p>
+      ) : null}
+    </div>
   );
 }
 
@@ -1036,6 +1160,19 @@ function PreviewToolbar({
 }) {
   const { isPlaying } = usePlaybackStore();
   const { layoutGuide, toggleLayoutGuide } = useEditorStore();
+  const { activeProject } = useProjectStore();
+  const totalDuration = getTotalDuration();
+
+  const formattedCurrent = formatTimeCode(
+    currentTime,
+    "HH:MM:SS:FF",
+    activeProject?.fps || DEFAULT_FPS
+  );
+  const formattedTotal = formatTimeCode(
+    totalDuration,
+    "HH:MM:SS:FF",
+    activeProject?.fps || DEFAULT_FPS
+  );
 
   if (isExpanded) {
     return (
@@ -1055,31 +1192,38 @@ function PreviewToolbar({
   return (
     <div
       data-toolbar
-      className="flex justify-end gap-2 h-auto pb-5 pr-5 pt-4 w-full"
+      className="flex items-center justify-between rounded-2xl border border-border/40 bg-surface-base/70 px-4 py-3"
     >
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
         <Button
-          variant="text"
+          variant="ghost"
           size="icon"
           onClick={toggle}
           disabled={!hasAnyElements}
-          className="h-auto p-0"
+          className="h-9 w-9 rounded-xl border border-border/30 bg-surface-elevated/60 text-foreground shadow-soft transition hover:bg-surface-elevated"
         >
           {isPlaying ? (
-            <Pause className="h-3 w-3" />
+            <Pause className="h-4 w-4" />
           ) : (
-            <Play className="h-3 w-3" />
+            <Play className="h-4 w-4" />
           )}
         </Button>
+        <div className="flex items-center gap-2 rounded-xl border border-border/30 bg-surface-base/60 px-3 py-1.5 text-xs font-medium text-muted-foreground">
+          <span>{formattedCurrent}</span>
+          <span className="opacity-40">/</span>
+          <span>{formattedTotal}</span>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
         <Popover>
           <PopoverTrigger asChild>
             <Button
-              variant="text"
+              variant="ghost"
               size="icon"
-              className="h-auto p-0 mr-1"
+              className="h-9 w-9 rounded-xl border border-border/30 bg-surface-base/60 text-foreground transition hover:bg-surface-elevated"
               title="Toggle layout guide"
             >
-              <SocialsIcon className="!size-6" />
+              <SocialsIcon className="h-5 w-5" />
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-80">
@@ -1120,13 +1264,13 @@ function PreviewToolbar({
           </PopoverContent>
         </Popover>
         <Button
-          variant="text"
+          variant="ghost"
           size="icon"
-          className="size-4!"
+          className="h-9 w-9 rounded-xl border border-border/30 bg-surface-base/60 text-foreground transition hover:bg-surface-elevated"
           onClick={onToggleExpanded}
           title="Enter fullscreen"
         >
-          <Expand className="size-4!" />
+          <Expand className="h-5 w-5" />
         </Button>
       </div>
     </div>

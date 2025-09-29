@@ -22,6 +22,7 @@ import { TIMELINE_CONSTANTS } from "@/constants/timeline-constants";
 import { checkElementOverlaps, resolveElementOverlaps } from "@/lib/timeline";
 import { DEFAULT_TEXT_ELEMENT } from "@/constants/text-constants";
 import { usePlaybackStore } from "./playback-store";
+import { videoCache } from "@/lib/video-cache";
 
 // Helper function to manage element naming with suffixes
 const getElementNameWithSuffix = (
@@ -737,6 +738,11 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
       trimEnd,
       pushHistory = true
     ) => {
+      const track = get()._tracks.find((t) => t.id === trackId);
+      const element = track?.elements.find((e) => e.id === elementId);
+      if (element && element.type === "media") {
+        videoCache.clearVideo(element.mediaId);
+      }
       if (pushHistory) get().pushHistory();
       updateTracksAndSave(
         get()._tracks.map((track) =>
@@ -760,6 +766,11 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
       duration,
       pushHistory = true
     ) => {
+      const track = get()._tracks.find((t) => t.id === trackId);
+      const element = track?.elements.find((e) => e.id === elementId);
+      if (element && element.type === "media") {
+        videoCache.clearVideo(element.mediaId);
+      }
       if (pushHistory) get().pushHistory();
       updateTracksAndSave(
         get()._tracks.map((track) =>
@@ -781,6 +792,11 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
       startTime,
       pushHistory = true
     ) => {
+      const track = get()._tracks.find((t) => t.id === trackId);
+      const element = track?.elements.find((e) => e.id === elementId);
+      if (element && element.type === "media") {
+        videoCache.clearVideo(element.mediaId);
+      }
       if (pushHistory) get().pushHistory();
       const clampedStartTime = Math.max(0, startTime);
       updateTracksAndSave(
@@ -910,6 +926,10 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
 
       if (!element) return;
 
+      if (element.type === "media") {
+        videoCache.clearVideo(element.mediaId);
+      }
+
       const effectiveStart = element.startTime;
       const effectiveEnd =
         element.startTime +
@@ -950,6 +970,10 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
       const element = track?.elements.find((c) => c.id === elementId);
 
       if (!element) return;
+
+      if (element.type === "media") {
+        videoCache.clearVideo(element.mediaId);
+      }
 
       const effectiveStart = element.startTime;
       const effectiveEnd =
@@ -1618,6 +1642,12 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
         );
         return;
       }
+
+      elementsToSplit.forEach(({ element }) => {
+        if (element.type === "media") {
+          videoCache.clearVideo(element.mediaId);
+        }
+      });
 
       get().pushHistory();
 

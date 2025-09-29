@@ -13,57 +13,61 @@ let playbackTimer: number | null = null;
 const startTimer = (store: () => PlaybackStore) => {
   if (playbackTimer) cancelAnimationFrame(playbackTimer);
 
-  // Use requestAnimationFrame for smoother updates
+  let lastUpdate = performance.now();
+
   const updateTime = () => {
     const state = store();
-    if (state.isPlaying && state.currentTime < state.duration) {
+    if (state.isPlaying) {
       const now = performance.now();
-      const delta = (now - lastUpdate) / 1000; // Convert to seconds
+      const delta = (now - lastUpdate) / 1000;
       lastUpdate = now;
 
-      const newTime = state.currentTime + delta * state.speed;
-
-      // Get actual content duration from timeline store
       const actualContentDuration = useTimelineStore
         .getState()
         .getTotalDuration();
-
-      // Stop at actual content end, not timeline duration (which has 10s minimum)
-      // It was either this or reducing default min timeline to 1 second
       const effectiveDuration =
         actualContentDuration > 0 ? actualContentDuration : state.duration;
 
-      if (newTime >= effectiveDuration) {
-        // When content completes, pause just before the end so we can see the last frame
-        const projectFps = useProjectStore.getState().activeProject?.fps;
-        if (!projectFps)
-          console.error(
-            "Project FPS is not set, assuming " + DEFAULT_FPS + "fps"
-          );
-
-        const frameOffset = 1 / (projectFps ?? DEFAULT_FPS); // Stop 1 frame before end based on project FPS
-        const stopTime = Math.max(0, effectiveDuration - frameOffset);
-
+      if (effectiveDuration <= 0) {
         state.pause();
-        state.setCurrentTime(stopTime);
-        // Notify video elements to sync with end position
+        state.setCurrentTime(0);
         window.dispatchEvent(
-          new CustomEvent("playback-seek", {
-            detail: { time: stopTime },
-          })
+          new CustomEvent("playback-seek", { detail: { time: 0 } })
         );
       } else {
-        state.setCurrentTime(newTime);
-        // Notify video elements to sync
-        window.dispatchEvent(
-          new CustomEvent("playback-update", { detail: { time: newTime } })
-        );
+        let newTime = state.currentTime + delta * state.speed;
+        const projectFps =
+          useProjectStore.getState().activeProject?.fps ?? DEFAULT_FPS;
+        const frameOffset = 1 / projectFps;
+
+        if (newTime >= effectiveDuration) {
+          newTime = newTime % effectiveDuration;
+          if (
+            effectiveDuration - newTime <= frameOffset ||
+            Number.isNaN(newTime)
+          ) {
+            newTime = 0;
+          }
+
+          state.setCurrentTime(newTime);
+          window.dispatchEvent(
+            new CustomEvent("playback-seek", { detail: { time: newTime } })
+          );
+          window.dispatchEvent(
+            new CustomEvent("playback-update", { detail: { time: newTime } })
+          );
+          lastUpdate = performance.now();
+        } else {
+          state.setCurrentTime(newTime);
+          window.dispatchEvent(
+            new CustomEvent("playback-update", { detail: { time: newTime } })
+          );
+        }
       }
     }
     playbackTimer = requestAnimationFrame(updateTime);
   };
 
-  let lastUpdate = performance.now();
   playbackTimer = requestAnimationFrame(updateTime);
 };
 
@@ -122,7 +126,21 @@ export const usePlaybackStore = create<PlaybackStore>((set, get) => ({
 
   seek: (time: number) => {
     const { duration } = get();
-    const clampedTime = Math.max(0, Math.min(duration, time));
+    const actualContentDuration = useTimelineStore
+      .getState()
+      .getTotalDuration();
+    const effectiveDuration =
+      actualContentDuration > 0 ? actualContentDuration : duration;
+
+    const projectFps =
+      useProjectStore.getState().activeProject?.fps ?? DEFAULT_FPS;
+    const frameOffset = 1 / projectFps;
+    const maxTime =
+      effectiveDuration > 0
+        ? Math.max(0, effectiveDuration - frameOffset)
+        : duration;
+    const clampedTime = Math.max(0, Math.min(maxTime, time));
+
     set({ currentTime: clampedTime });
 
     const event = new CustomEvent("playback-seek", {

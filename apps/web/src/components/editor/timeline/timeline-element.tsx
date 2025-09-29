@@ -18,6 +18,7 @@ import AudioWaveform from "../audio-waveform";
 import { toast } from "sonner";
 import { TimelineElementProps, MediaElement } from "@/types/timeline";
 import { useTimelineElementResize } from "@/hooks/use-timeline-element-resize";
+import { cn } from "@/lib/utils";
 import {
   getTrackElementClasses,
   TIMELINE_CONSTANTS,
@@ -254,11 +255,13 @@ export function TimelineElement({
           onMouseLeave={resizing ? handleResizeEnd : undefined}
         >
           <div
-            className={`relative h-full rounded-[0.5rem] cursor-pointer overflow-hidden ${getTrackElementClasses(
-              track.type
-            )} ${isSelected ? "" : ""} ${
-              isBeingDragged ? "z-50" : "z-10"
-            } ${element.hidden ? "opacity-50" : ""}`}
+            className={cn(
+              "relative h-full cursor-pointer overflow-hidden rounded-xl bg-surface-elevated/90 transition-all",
+              getTrackElementClasses(track.type),
+              isBeingDragged ? "z-50 ring-1 ring-primary/60 shadow-soft" : "z-10",
+              isSelected ? "ring-1 ring-primary/60 shadow-soft" : "hover:bg-surface-elevated",
+              element.hidden ? "opacity-50" : undefined
+            )}
             onClick={(e) => onElementClick && onElementClick(e, element)}
             onMouseDown={handleElementMouseDown}
             onContextMenu={(e) =>

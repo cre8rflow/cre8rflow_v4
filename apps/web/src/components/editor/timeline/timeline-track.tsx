@@ -6,6 +6,7 @@ import { useMediaStore } from "@/stores/media-store";
 import { toast } from "sonner";
 import { processMediaFiles } from "@/lib/media-processing";
 import { TimelineElement } from "./timeline-element";
+import { cn } from "@/lib/utils";
 import {
   TimelineTrack,
   getMainTrack,
@@ -1106,7 +1107,14 @@ export function TimelineTrackContent({
 
   return (
     <div
-      className="w-full h-full hover:bg-muted/20"
+      className={cn(
+        "relative h-full w-full rounded-xl border border-border/30 bg-surface-elevated/70 transition-colors",
+        isDropping
+          ? wouldOverlap
+            ? "border-red-500/60 bg-red-500/10"
+            : "border-primary/60 bg-primary/10"
+          : "hover:bg-surface-elevated/75"
+      )}
       onClick={(e) => {
         // If clicking empty area (not on an element), deselect all elements
         if (!(e.target as HTMLElement).closest(".timeline-element")) {
@@ -1120,23 +1128,24 @@ export function TimelineTrackContent({
     >
       <div
         ref={timelineRef}
-        className="h-full relative track-elements-container min-w-full"
+        className="track-elements-container relative h-full min-w-full"
       >
         {track.elements.length === 0 ? (
           <div
-            className={`h-full w-full rounded-sm border-2 border-dashed flex items-center justify-center text-xs text-muted-foreground transition-colors ${
+            className={cn(
+              "flex h-full w-full items-center justify-center rounded-xl border border-dashed text-xs text-muted-foreground/80",
               isDropping
                 ? wouldOverlap
-                  ? "border-red-500 bg-red-500/10 text-red-600"
-                  : "border-primary bg-primary/10 text-primary"
-                : "border-muted/30"
-            }`}
+                  ? "border-red-500/60 bg-red-500/10 text-red-400"
+                  : "border-primary/60 bg-primary/10 text-primary"
+                : "border-border/30"
+            )}
           >
             {isDropping
               ? wouldOverlap
                 ? "Cannot drop - would overlap"
                 : "Drop element here"
-              : ""}
+              : "Drop media or elements here"}
           </div>
         ) : (
           <>
