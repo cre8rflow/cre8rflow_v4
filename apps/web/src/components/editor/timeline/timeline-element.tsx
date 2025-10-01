@@ -93,7 +93,9 @@ export function TimelineElement({
       ? dragState.currentTime
       : element.startTime;
 
-  const elementLeft = elementStartTime * 50 * zoomLevel;
+  const elementLeft = Math.floor(
+    elementStartTime * TIMELINE_CONSTANTS.PIXELS_PER_SECOND * zoomLevel
+  );
 
   const commandStatuses = useElementCommandStatus(track.id, element.id);
 
@@ -173,8 +175,13 @@ export function TimelineElement({
   const renderElementContent = () => {
     if (element.type === "text") {
       return (
-        <div className="w-full h-full flex items-center justify-start pl-2">
-          <span className="text-xs text-white truncate">{element.content}</span>
+        <div className="w-full h-full flex items-center justify-center">
+          <span
+            className="text-white text-xs font-semibold truncate"
+            title={element.content}
+          >
+            {element.content}
+          </span>
         </div>
       );
     }
@@ -271,14 +278,17 @@ export function TimelineElement({
         >
           <div
             className={cn(
-              "relative h-full cursor-pointer overflow-hidden rounded-xl bg-surface-elevated/90 transition-all",
-              getTrackElementClasses(track.type),
+              "relative h-full cursor-pointer overflow-hidden transition-all",
+              element.type === "text"
+                ? "rounded-none bg-emerald-600"
+                : "rounded-none bg-surface-elevated/90",
+              element.type === "text" ? undefined : getTrackElementClasses(track.type),
               isBeingDragged
                 ? "z-50 ring-1 ring-primary/60 shadow-soft"
                 : "z-10",
               isSelected
                 ? "ring-1 ring-primary/60 shadow-soft"
-                : "hover:bg-surface-elevated",
+                : element.type === "text" ? undefined : "hover:bg-surface-elevated",
               element.hidden ? "opacity-50" : undefined
             )}
             onClick={(e) => onElementClick && onElementClick(e, element)}

@@ -235,7 +235,7 @@ export function Captions() {
                 <Shield className="h-5 w-5" />
                 Audio Processing Notice
               </DialogTitle>
-              <DialogDescription className="space-y-3">
+              <div className="text-sm text-muted-foreground space-y-3">
                 <p>
                   To generate captions, we need to process your timeline audio
                   using speech-to-text technology.
@@ -281,7 +281,7 @@ export function Captions() {
                   anywhere. It's cryptographically impossible for us, our cloud
                   providers, or anyone else to decrypt your audio files.
                 </p>
-              </DialogDescription>
+              </div>
             </DialogHeader>
             <DialogFooter className="gap-2">
               <Button

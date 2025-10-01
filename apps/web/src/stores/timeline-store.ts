@@ -245,6 +245,9 @@ interface TimelineStore {
     excludeElementId?: string
   ) => boolean;
   findOrCreateTrack: (trackType: TrackType) => string;
+  // New helpers for text track positioning
+  getTextTrackBelowMain: () => TimelineTrack | null;
+  ensureTextTrackBelowMain: () => string; // returns track id
   addElementAtTime: (
     item: MediaFile | TextElement,
     currentTime?: number
@@ -302,6 +305,28 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
   const sortedInitialTracks = sortTracksByOrder(initialTracks);
 
   return {
+    getTextTrackBelowMain: () => {
+      const tracks = get()._tracks;
+      const main = tracks.find((t) => t.isMain) || null;
+      if (!main) return tracks.find((t) => t.type === "text") || null;
+      const mainIndex = tracks.findIndex((t) => t.id === main.id);
+      const candidate = tracks[mainIndex + 1];
+      if (candidate && candidate.type === "text") return candidate;
+      return null;
+    },
+
+    ensureTextTrackBelowMain: () => {
+      const tracks = get()._tracks;
+      const main = tracks.find((t) => t.isMain) || null;
+      if (!main) {
+        // No main yet: insert text at index 0
+        return get().insertTrackAt("text", 0);
+      }
+      const mainIndex = tracks.findIndex((t) => t.id === main.id);
+      const existing = get().getTextTrackBelowMain();
+      if (existing) return existing.id;
+      return get().insertTrackAt("text", Math.max(0, mainIndex + 1));
+    },
     _tracks: initialTracks,
     tracks: sortedInitialTracks,
     history: [],
@@ -1438,7 +1463,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
 
     addElementAtTime: (item: MediaFile | TextElement, currentTime = 0) => {
       if (item.type === "text") {
-        const targetTrackId = get().insertTrackAt("text", 0);
+        const targetTrackId = get().ensureTextTrackBelowMain();
         get().addElementToTrack(
           targetTrackId,
           buildTextElement(item, currentTime)
@@ -1464,7 +1489,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
 
     addElementToNewTrack: (item) => {
       if (item.type === "text") {
-        const targetTrackId = get().insertTrackAt("text", 0);
+        const targetTrackId = get().ensureTextTrackBelowMain();
         get().addElementToTrack(
           targetTrackId,
           buildTextElement(item as TextElement | DragData, 0)

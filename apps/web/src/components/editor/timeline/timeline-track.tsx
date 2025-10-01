@@ -847,25 +847,18 @@ export function TimelineTrackContent({
 
           // Handle position-aware track creation for text
           if (track.type !== "text" || dropPosition !== "on") {
-            // Text tracks should go above the main track
+            // Text tracks should go directly below the main media track
             const mainTrack = getMainTrack(tracks);
             let insertIndex: number;
 
-            if (dropPosition === "above") {
-              insertIndex = currentTrackIndex;
-            } else if (dropPosition === "below") {
-              insertIndex = currentTrackIndex + 1;
+            if (mainTrack) {
+              const mainTrackIndex = tracks.findIndex(
+                (t) => t.id === mainTrack.id
+              );
+              insertIndex = mainTrackIndex + 1;
             } else {
-              // dropPosition === "on" but track is not text type
-              // Insert above main track if main track exists, otherwise at top
-              if (mainTrack) {
-                const mainTrackIndex = tracks.findIndex(
-                  (t) => t.id === mainTrack.id
-                );
-                insertIndex = mainTrackIndex;
-              } else {
-                insertIndex = 0; // Top of timeline
-              }
+              // Fallback when no main track yet
+              insertIndex = Math.max(0, currentTrackIndex + (dropPosition === "above" ? 0 : 1));
             }
 
             targetTrackId = insertTrackAt("text", insertIndex);
@@ -1129,11 +1122,12 @@ export function TimelineTrackContent({
       <div
         ref={timelineRef}
         className="track-elements-container relative h-full min-w-full"
+        style={{ paddingLeft: 0 }}
       >
         {track.elements.length === 0 ? (
           <div
             className={cn(
-              "flex h-full w-full items-center justify-center rounded-xl border border-dashed text-xs text-muted-foreground/80",
+              "flex h-full w-full items-center justify-center rounded-none border border-dashed text-xs text-muted-foreground/80",
               isDropping
                 ? wouldOverlap
                   ? "border-red-500/60 bg-red-500/10 text-red-400"

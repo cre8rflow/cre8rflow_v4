@@ -456,7 +456,8 @@ function executeCaptionsGenerateInstruction({
       }
 
       const timeline = useTimelineStore.getState();
-      const trackId = timeline.insertTrackAt("text", 0);
+      // Ensure captions go to the text track immediately below the main media track
+      const trackId = timeline.ensureTextTrackBelowMain();
       const baselineState = useTimelineStore.getState();
       const baselineTrack = baselineState.tracks.find((t) => t.id === trackId);
       const baselineIds = new Set(
