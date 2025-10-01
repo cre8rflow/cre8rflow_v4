@@ -234,9 +234,15 @@ export class VideoCache {
         this.closeFrame(sinkData.currentFrame);
       }
       if (sinkData.fallback) {
-        try { sinkData.fallback.video.pause(); } catch {}
-        try { sinkData.fallback.video.src = ""; } catch {}
-        try { URL.revokeObjectURL(sinkData.fallback.objectUrl); } catch {}
+        try {
+          sinkData.fallback.video.pause();
+        } catch {}
+        try {
+          sinkData.fallback.video.src = "";
+        } catch {}
+        try {
+          URL.revokeObjectURL(sinkData.fallback.objectUrl);
+        } catch {}
       }
 
       this.sinks.delete(mediaId);
@@ -345,7 +351,11 @@ export class VideoCache {
     sinkData: VideoSinkData,
     _file: File,
     time: number
-  ): Promise<{ canvas: HTMLCanvasElement; timestamp: number; duration: number } | null> {
+  ): Promise<{
+    canvas: HTMLCanvasElement;
+    timestamp: number;
+    duration: number;
+  } | null> {
     if (!sinkData.fallback) return null;
     const fb = sinkData.fallback;
     if (!fb.ready) return null;

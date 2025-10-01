@@ -67,7 +67,9 @@ export interface TrimPlan {
     left?: TrimSideSpec; // Left/start trim specification
     right?: TrimSideSpec; // Right/end trim specification
   };
-  options?: BaseCommandOptions;
+  options?: BaseCommandOptions & {
+    ripple?: boolean; // When true, close gaps by rippling following clips
+  };
 }
 
 // Trim command result

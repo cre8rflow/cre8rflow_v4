@@ -5,6 +5,7 @@
 
 import { useTimelineStore } from "@/stores/timeline-store";
 import { usePlaybackStore } from "@/stores/playback-store";
+import { useProjectStore, DEFAULT_FPS } from "@/stores/project-store";
 import { toast } from "sonner";
 import type { TimelineElement } from "@/types/timeline";
 import type {
@@ -22,6 +23,9 @@ import {
   validateTrimBounds,
   TRIM_ERROR_MESSAGES,
 } from "./utils";
+import { emitTrimHighlights } from "@/lib/timeline-highlights";
+
+const DELTA_EPSILON = 1e-4;
 
 /**
  * Convert V4 TimelineElement to ElementCommandData for command operations
@@ -38,6 +42,83 @@ function convertToElementCommandData(
     trimStart: element.trimStart,
     trimEnd: element.trimEnd,
   };
+}
+
+function getCurrentElementData(
+  trackId: string,
+  elementId: string
+): ElementCommandData | null {
+  const timeline = useTimelineStore.getState();
+  const track = timeline.tracks.find((t) => t.id === trackId);
+  if (!track) return null;
+  const element = track.elements.find((el) => el.id === elementId);
+  if (!element) return null;
+  return convertToElementCommandData(element, trackId);
+}
+
+type RippleRecord = {
+  elementId: string;
+  originalEnd: number;
+  removedDuration: number;
+};
+
+function applyRippleAdjustments(
+  recordsByTrack: Record<string, RippleRecord[]>
+): void {
+  const trackIds = Object.keys(recordsByTrack);
+  if (trackIds.length === 0) return;
+
+  const projectState = useProjectStore.getState();
+  const fps = projectState.activeProject?.fps ?? DEFAULT_FPS;
+  const roundToFrame = (value: number) =>
+    Math.max(0, Math.round(value * fps) / fps);
+
+  const initialTimelineState = useTimelineStore.getState();
+
+  for (const trackId of trackIds) {
+    const records = recordsByTrack[trackId]?.filter(
+      (record) => record.removedDuration > DELTA_EPSILON
+    );
+    if (!records || records.length === 0) continue;
+
+    const track = initialTimelineState.tracks.find((t) => t.id === trackId);
+    if (!track) continue;
+
+    const sortedRecords = [...records].sort(
+      (a, b) => a.originalEnd - b.originalEnd
+    );
+
+    const elementsSnapshot = [...track.elements]
+      .map((element) => ({
+        id: element.id,
+        originalStart: element.startTime,
+      }))
+      .sort((a, b) => a.originalStart - b.originalStart);
+
+    if (elementsSnapshot.length === 0) continue;
+
+    const timelineActions = useTimelineStore.getState();
+
+    for (const element of elementsSnapshot) {
+      let shift = 0;
+      for (const record of sortedRecords) {
+        if (record.elementId === element.id) continue;
+        if (record.originalEnd - DELTA_EPSILON <= element.originalStart) {
+          shift += record.removedDuration;
+        }
+      }
+
+      if (shift > DELTA_EPSILON) {
+        const newStart = roundToFrame(element.originalStart - shift);
+        timelineActions.updateElementStartTime(
+          trackId,
+          element.id,
+          newStart,
+          false
+        );
+      }
+    }
+  }
 }
 
 /**
@@ -210,18 +291,56 @@ export function trim({ plan }: { plan: TrimPlan }): TrimResult {
     timeline.pushHistory();
   }
 
+  const rippleRequested = plan.options?.ripple === true;
+  const rippleRecordsByTrack: Record<string, RippleRecord[]> = {};
+
   // Apply trim to each target element
   const updated: UpdatedElement[] = [];
   let skippedCount = 0;
 
-  for (const element of targetElements) {
-    const result = applyElementTrim(element, plan, currentTime, timeline);
+  for (const target of targetElements) {
+    const liveElement = getCurrentElementData(target.trackId, target.id);
+    if (!liveElement) {
+      skippedCount++;
+      continue;
+    }
+
+    const originalDuration =
+      liveElement.duration - liveElement.trimStart - liveElement.trimEnd;
+    const originalEnd = liveElement.startTime + originalDuration;
+
+    const result = applyElementTrim(liveElement, plan, currentTime, timeline);
 
     if (result) {
       updated.push(result);
+
+      if (rippleRequested && !plan.options?.dryRun) {
+        const trimmedRight =
+          result.trimEnd - liveElement.trimEnd > DELTA_EPSILON;
+
+        if (trimmedRight) {
+          const newDuration =
+            liveElement.duration - result.trimStart - result.trimEnd;
+          const removedDuration = originalDuration - newDuration;
+          if (removedDuration > DELTA_EPSILON) {
+            if (!rippleRecordsByTrack[liveElement.trackId]) {
+              rippleRecordsByTrack[liveElement.trackId] = [];
+            }
+            rippleRecordsByTrack[liveElement.trackId].push({
+              elementId: liveElement.id,
+              originalEnd,
+              removedDuration,
+            });
+          }
+        }
+      }
     } else {
       skippedCount++;
     }
+  }
+
+  if (rippleRequested && !plan.options?.dryRun) {
+    applyRippleAdjustments(rippleRecordsByTrack);
   }
 
   // Check if any elements were successfully updated
@@ -239,6 +358,23 @@ export function trim({ plan }: { plan: TrimPlan }): TrimResult {
       skipped: skippedCount,
       error,
     };
+  }
+
+  if (!plan.options?.dryRun) {
+    const highlightTargets: ElementTarget[] = updated.map((entry) => ({
+      trackId: entry.trackId,
+      elementId: entry.elementId,
+    }));
+
+    const includeAttachments =
+      plan.scope === "selection" || highlightTargets.length > 1;
+
+    emitTrimHighlights({
+      targets: highlightTargets,
+      includeAttachments,
+      ttl: 2800,
+      meta: { source: "trim", scope: plan.scope },
+    });
   }
 
   // Show success notification unless disabled

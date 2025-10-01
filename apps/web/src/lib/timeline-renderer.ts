@@ -70,7 +70,10 @@ export async function renderTimelineFrame({
   const idToMedia = new Map(mediaFiles.map((m) => [m.id, m] as const));
   // Cache frames fetched during this render to avoid duplicate requests that may
   // invalidate/close previously returned frames mid-draw.
-  const framesByMediaId = new Map<string, Awaited<ReturnType<typeof videoCache.getFrameAt>> | null>();
+  const framesByMediaId = new Map<
+    string,
+    Awaited<ReturnType<typeof videoCache.getFrameAt>> | null
+  >();
   const active: Array<{
     track: TimelineTrack;
     element: TimelineTrack["elements"][number];

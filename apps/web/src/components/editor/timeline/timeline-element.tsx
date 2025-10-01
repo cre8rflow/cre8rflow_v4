@@ -32,6 +32,9 @@ import {
   ContextMenuTrigger,
 } from "../../ui/context-menu";
 import { useMediaPanelStore } from "../media-panel/store";
+import { useMemo, useRef } from "react";
+import type { CSSProperties } from "react";
+import { useElementCommandStatus } from "@/stores/timeline-command-store";
 
 export function TimelineElement({
   element,
@@ -91,6 +94,18 @@ export function TimelineElement({
       : element.startTime;
 
   const elementLeft = elementStartTime * 50 * zoomLevel;
+
+  const commandStatuses = useElementCommandStatus(track.id, element.id);
+
+  const commandFrames = useMemo(() => {
+    return commandStatuses.map(({ command, target }) => ({
+      id: `${command.id}-${command.phase}`,
+      phase: command.phase,
+      progress: Math.max(0, Math.min(1, target.progress)),
+      theme: command.theme,
+      description: command.description,
+    }));
+  }, [commandStatuses]);
 
   const handleElementSplitContext = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -258,8 +273,12 @@ export function TimelineElement({
             className={cn(
               "relative h-full cursor-pointer overflow-hidden rounded-xl bg-surface-elevated/90 transition-all",
               getTrackElementClasses(track.type),
-              isBeingDragged ? "z-50 ring-1 ring-primary/60 shadow-soft" : "z-10",
-              isSelected ? "ring-1 ring-primary/60 shadow-soft" : "hover:bg-surface-elevated",
+              isBeingDragged
+                ? "z-50 ring-1 ring-primary/60 shadow-soft"
+                : "z-10",
+              isSelected
+                ? "ring-1 ring-primary/60 shadow-soft"
+                : "hover:bg-surface-elevated",
               element.hidden ? "opacity-50" : undefined
             )}
             onClick={(e) => onElementClick && onElementClick(e, element)}
@@ -271,6 +290,28 @@ export function TimelineElement({
             <div className="absolute inset-0 flex items-center h-full">
               {renderElementContent()}
             </div>
+
+            {commandFrames.map((frame) => {
+              const styleVars = {
+                "--command-frame-color": frame.theme.color,
+                "--command-frame-fill": frame.theme.fill,
+              } as CSSProperties;
+              return (
+                <div
+                  key={frame.id}
+                  className={cn(
+                    "timeline-command-frame",
+                    `timeline-command-frame--${frame.phase}`
+                  )}
+                  style={styleVars}
+                >
+                  <div
+                    className="timeline-command-frame__progress"
+                    style={{ width: `${frame.progress * 100}%` }}
+                  />
+                </div>
+              );
+            })}
 
             {(hasAudio ? isMuted : element.hidden) && (
               <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center pointer-events-none">

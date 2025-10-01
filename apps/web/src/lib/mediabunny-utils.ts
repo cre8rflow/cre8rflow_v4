@@ -240,7 +240,9 @@ export const extractTimelineAudio = async (
         ? `[audio_0]aresample=${MIX_SAMPLE_RATE},aformat=sample_fmts=s16:channel_layouts=${layout}[out]`
         : `${filterInputs
             .map((_, i) => `[audio_${i}]`)
-            .join("")}amix=inputs=${audioElements.length}:duration=longest:dropout_transition=2,aresample=${MIX_SAMPLE_RATE},aformat=sample_fmts=s16:channel_layouts=${layout}[out]`;
+            .join(
+              ""
+            )}amix=inputs=${audioElements.length}:duration=longest:dropout_transition=2,aresample=${MIX_SAMPLE_RATE},aformat=sample_fmts=s16:channel_layouts=${layout}[out]`;
 
     const complexFilter = [...filterInputs, mixFilter].join(";");
     const outputName = "timeline_audio.wav";

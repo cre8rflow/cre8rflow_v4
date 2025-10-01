@@ -336,32 +336,39 @@ export async function searchVideos(
     page_limit?: number;
     sort_option?: "score" | "clip_count";
     threshold?: "high" | "medium" | "low";
-    search_options?: Array<"audio" | "visual" | "conversation" | "text_in_video" | "logo">;
+    search_options?: Array<
+      "audio" | "visual" | "conversation" | "text_in_video" | "logo"
+    >;
   },
   videoIds?: string[]
 ): Promise<SearchResult> {
   console.log(`Searching videos in index ${indexId}: "${query}"`);
 
   try {
-    // Build multipart form-data per TL API requirements
-    const form = new FormData();
-    // Text search must use 'query_text' (per TL v1.3 API)
-    form.append("query_text", query);
-    form.append("index_id", indexId);
-    // Search domains (must be supported by the index). Default conservatively to ['visual'].
     const domains =
-      (searchOptions?.search_options && searchOptions.search_options.length)
+      searchOptions?.search_options && searchOptions.search_options.length
         ? searchOptions.search_options
         : ["visual"];
-    domains.forEach((opt) => form.append("search_options", opt));
-    if (searchOptions?.page_limit != null)
+
+    const form = new FormData();
+    form.append("query_text", query);
+    form.append("index_id", indexId);
+
+    domains.forEach((domain) => form.append("search_options", domain));
+
+    if (searchOptions?.page_limit != null) {
       form.append("page_limit", String(searchOptions.page_limit));
-    if (searchOptions?.sort_option)
+    }
+    if (searchOptions?.sort_option) {
       form.append("sort_option", searchOptions.sort_option);
-    if (searchOptions?.threshold)
+    }
+    if (searchOptions?.threshold) {
       form.append("threshold", searchOptions.threshold);
+    }
     if (videoIds && videoIds.length) {
-      for (const vid of videoIds) form.append("video_ids", vid);
+      for (const vid of videoIds) {
+        form.append("video_ids[]", vid);
+      }
     }
 
     const response = await twelveLabsRequest("search", {

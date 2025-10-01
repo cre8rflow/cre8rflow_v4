@@ -3,8 +3,28 @@
  * Handles EventSource connection and instruction execution
  */
 
-import type { AgentRequestPayload, AgentStreamEvent } from "@/types/agent";
+import type {
+  AgentRequestPayload,
+  AgentStreamEvent,
+  AnyInstruction,
+} from "@/types/agent";
 import { executeInstruction } from "./agent-executor";
+import { useTimelineCommandStore } from "@/stores/timeline-command-store";
+import type { CommandEffect } from "@/stores/timeline-command-store";
+const mapInstructionToEffect = (instructionType: string): CommandEffect => {
+  switch (instructionType) {
+    case "trim":
+      return "trim";
+    case "cut-out":
+      return "cut";
+    case "captions.generate":
+      return "caption";
+    case "deadspace.trim":
+      return "deadspace";
+    default:
+      return "generic";
+  }
+};
 
 /**
  * Start an agent stream session with SSE
@@ -34,6 +54,75 @@ export function startAgentStream({
   // Create EventSource connection
   const eventSource = new EventSource(`/api/agent/stream?${params.toString()}`);
 
+  const commandRegistry = new Map<
+    string,
+    { id: string; type: CommandEffect }
+  >();
+  const activeCommands = new Set<string>();
+  const pendingSteps: Array<{
+    instruction: AnyInstruction;
+    stepIndex: number;
+    totalSteps: number;
+    registryEntry: { id: string; type: CommandEffect };
+    commandKey: string;
+  }> = [];
+  let isProcessing = false;
+
+  const commandStore = useTimelineCommandStore.getState();
+  const STEP_DELAY_MS = 600;
+  const processedInstructionKeys = new Set<string>();
+
+  const processQueue = () => {
+    if (isProcessing) return;
+    const next = pendingSteps.shift();
+    if (!next) {
+      return;
+    }
+    isProcessing = true;
+
+    const { instruction, stepIndex, totalSteps, registryEntry, commandKey } =
+      next;
+    const currentStepIndex = stepIndex + 1;
+    const effectiveTotal = totalSteps || currentStepIndex;
+
+    commandStore.upsertCommand({
+      id: registryEntry.id,
+      type: registryEntry.type,
+      description: (instruction as any).description,
+      totalSteps: effectiveTotal,
+      currentStep: currentStepIndex,
+      phase: "executing",
+    });
+
+    const result = executeInstruction({
+      instruction,
+      context: {
+        commandId: registryEntry.id,
+        totalSteps,
+        stepIndex,
+      },
+    });
+
+    if (!result.success && "error" in result) {
+      commandStore.failCommand(registryEntry.id, result.error);
+      onError?.(result.error);
+    } else {
+      commandStore.updateProgress({
+        id: registryEntry.id,
+        currentStep: currentStepIndex,
+        totalSteps: effectiveTotal,
+        phase: "executing",
+      });
+    }
+
+    // Wait before processing next step to allow animation to be seen
+    setTimeout(() => {
+      processedInstructionKeys.add(commandKey);
+      isProcessing = false;
+      processQueue();
+    }, STEP_DELAY_MS);
+  };
+
   // Handle incoming messages
   eventSource.onmessage = (event) => {
     try {
@@ -61,22 +150,59 @@ export function startAgentStream({
             // Notify about the step
             onStep?.(streamEvent);
 
-            // Execute the instruction using existing executor
-            const result = executeInstruction({
-              instruction: streamEvent.instruction,
+            const instruction = streamEvent.instruction;
+            const commandKey = JSON.stringify(instruction);
+            let registryEntry = commandRegistry.get(commandKey);
+            if (!registryEntry) {
+              const id = `cmd-${mapInstructionToEffect(instruction.type)}-${commandRegistry.size + 1}`;
+              registryEntry = {
+                id,
+                type: mapInstructionToEffect(instruction.type),
+              };
+              commandRegistry.set(commandKey, registryEntry);
+            }
+            const alreadyQueued = pendingSteps.some(
+              (step) => step.commandKey === commandKey
+            );
+            if (alreadyQueued || processedInstructionKeys.has(commandKey)) {
+              return;
+            }
+            activeCommands.add(registryEntry.id);
+
+            pendingSteps.push({
+              instruction,
+              stepIndex: streamEvent.stepIndex ?? 0,
+              totalSteps: streamEvent.totalSteps ?? 0,
+              registryEntry,
+              commandKey,
             });
 
-            // Handle execution errors
-            if (!result.success && "error" in result) {
-              onError?.(result.error);
-            }
+            processQueue();
           }
           break;
         }
 
         case "done": {
-          onDone?.();
-          eventSource.close();
+          const finalize = () => {
+            activeCommands.forEach((commandId) => {
+              commandStore.completeCommand(commandId);
+            });
+            activeCommands.clear();
+            commandRegistry.clear();
+            onDone?.();
+            eventSource.close();
+          };
+
+          if (pendingSteps.length === 0 && !isProcessing) {
+            finalize();
+          } else {
+            const interval = setInterval(() => {
+              if (pendingSteps.length === 0 && !isProcessing) {
+                clearInterval(interval);
+                finalize();
+              }
+            }, 100);
+          }
           return;
         }
 
@@ -88,6 +214,10 @@ export function startAgentStream({
       }
     } catch (parseError) {
       // Handle malformed JSON or parsing errors
+      activeCommands.forEach((commandId) => {
+        commandStore.failCommand(commandId, "Malformed SSE event");
+      });
+      activeCommands.clear();
       onError?.("Malformed SSE event");
       eventSource.close();
     }
@@ -96,6 +226,10 @@ export function startAgentStream({
   // Handle connection errors
   eventSource.onerror = (error) => {
     console.error("SSE connection error:", error);
+    activeCommands.forEach((commandId) => {
+      commandStore.failCommand(commandId, "Stream connection error");
+    });
+    activeCommands.clear();
     onError?.("Stream connection error");
     eventSource.close();
   };

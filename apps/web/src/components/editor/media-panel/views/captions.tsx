@@ -75,7 +75,7 @@ export function Captions() {
       });
 
       if (!uploadResponse.ok) {
-        const error = await uploadResponse.json().catch(() => ({} as any));
+        const error = await uploadResponse.json().catch(() => ({}) as any);
         throw new Error(error.message || "Failed to get upload URL");
       }
 

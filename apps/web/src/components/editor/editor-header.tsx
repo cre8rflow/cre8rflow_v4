@@ -40,7 +40,9 @@ export function EditorHeader() {
 
   const activeLink = useMemo(() => {
     if (!pathname) return null;
-    return NAV_LINKS.find((link) => pathname.startsWith(link.href))?.href ?? null;
+    return (
+      NAV_LINKS.find((link) => pathname.startsWith(link.href))?.href ?? null
+    );
   }, [pathname]);
 
   const handleNameSave = async (newName: string) => {
@@ -101,15 +103,23 @@ export function EditorHeader() {
   const centerContent = (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button className="bg-surface-muted/60 text-foreground shadow-soft transition hover:bg-surface-muted" size="sm">
+        <Button
+          className="bg-surface-muted/60 text-foreground shadow-soft transition hover:bg-surface-muted"
+          size="sm"
+        >
           <span className="mr-2 max-w-[12rem] truncate text-sm font-medium">
             {activeProject?.name ?? "Untitled Project"}
           </span>
           <ChevronDown className="h-4 w-4 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="center" className="w-56 bg-surface-elevated shadow-soft">
-        <DropdownMenuItem onClick={() => router.push("/projects")}>Back to projects</DropdownMenuItem>
+      <DropdownMenuContent
+        align="center"
+        className="w-56 bg-surface-elevated shadow-soft"
+      >
+        <DropdownMenuItem onClick={() => router.push("/projects")}>
+          Back to projects
+        </DropdownMenuItem>
         <DropdownMenuItem onClick={() => setIsRenameDialogOpen(true)}>
           <SquarePen className="mr-2 h-4 w-4" /> Rename project
         </DropdownMenuItem>
@@ -129,7 +139,11 @@ export function EditorHeader() {
       <PanelPresetSelector />
       <KeyboardShortcutsHelp />
       <ExportButton />
-      <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-white">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="text-muted-foreground hover:text-white"
+      >
         <Bell className="h-5 w-5" />
         <span className="sr-only">Notifications</span>
       </Button>

@@ -76,9 +76,25 @@
   --shadow-medium: 0 22px 48px -18px rgba(15, 15, 25, 0.7);
   --shadow-strong: 0 36px 72px -24px rgba(10, 10, 20, 0.8);
 
-  --gradient-app: radial-gradient(120% 120% at 50% 0%, rgba(127, 127, 213, 0.35) 0%, rgba(20, 20, 30, 0.92) 48%, rgba(12, 12, 20, 1) 100%);
-  --gradient-panel: linear-gradient(150deg, rgba(127, 127, 213, 0.45) 0%, rgba(47, 47, 135, 0.35) 35%, rgba(27, 27, 45, 0.95) 55%, rgba(127, 127, 213, 0.25) 100%);
-  --gradient-quick-action: linear-gradient(135deg, rgba(45, 45, 70, 0.95) 0%, rgba(111, 111, 203, 0.35) 50%, rgba(63, 63, 173, 0.45) 100%);
+  --gradient-app: radial-gradient(
+    120% 120% at 50% 0%,
+    rgba(127, 127, 213, 0.35) 0%,
+    rgba(20, 20, 30, 0.92) 48%,
+    rgba(12, 12, 20, 1) 100%
+  );
+  --gradient-panel: linear-gradient(
+    150deg,
+    rgba(127, 127, 213, 0.45) 0%,
+    rgba(47, 47, 135, 0.35) 35%,
+    rgba(27, 27, 45, 0.95) 55%,
+    rgba(127, 127, 213, 0.25) 100%
+  );
+  --gradient-quick-action: linear-gradient(
+    135deg,
+    rgba(45, 45, 70, 0.95) 0%,
+    rgba(111, 111, 203, 0.35) 50%,
+    rgba(63, 63, 173, 0.45) 100%
+  );
 
   /* Radius base */
   --radius: 0.875rem;
@@ -253,6 +269,18 @@
   --animate-accordion-down: accordion-down 0.2s ease-out;
   --animate-accordion-up: accordion-up 0.2s ease-out;
 
+  /* Command animation theme tokens */
+  --command-trim-color: rgba(45, 212, 191, 0.9); /* teal */
+  --command-trim-fill: rgba(45, 212, 191, 0.18);
+  --command-cut-color: rgba(249, 115, 129, 0.9); /* pink */
+  --command-cut-fill: rgba(249, 115, 129, 0.18);
+  --command-caption-color: rgba(250, 204, 21, 0.9); /* amber */
+  --command-caption-fill: rgba(250, 204, 21, 0.18);
+  --command-deadspace-color: rgba(110, 231, 183, 0.9);
+  --command-deadspace-fill: rgba(110, 231, 183, 0.18);
+  --command-generic-color: rgba(96, 165, 250, 0.9);
+  --command-generic-fill: rgba(96, 165, 250, 0.18);
+
   @keyframes accordion-down {
     from {
       height: 0;
@@ -310,5 +338,106 @@
   }
   &::-webkit-scrollbar-thumb:hover {
     background: var(--muted-foreground);
+  }
+}
+
+.timeline-command-frame {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  left: -4px;
+  right: -4px;
+  pointer-events: none;
+  border-radius: 0.875rem;
+  border: 2px solid var(--command-frame-color, rgba(96, 165, 250, 0.85));
+  background: linear-gradient(
+    180deg,
+    color-mix(
+      in srgb,
+      var(--command-frame-fill, rgba(96, 165, 250, 0.16)) 70%,
+      transparent
+    ),
+    transparent 90%
+  );
+  box-shadow:
+    0 0 0 1px
+    color-mix(
+      in srgb,
+      var(--command-frame-color, rgba(96, 165, 250, 0.85)) 40%,
+      transparent
+    ),
+    0 8px 24px -12px
+    color-mix(
+      in srgb,
+      var(--command-frame-color, rgba(96, 165, 250, 0.85)) 30%,
+      transparent
+    );
+  overflow: hidden;
+  transition:
+    opacity 0.35s ease-out,
+    transform 0.35s ease-out;
+}
+
+.timeline-command-frame--complete {
+  opacity: 0;
+}
+
+.timeline-command-frame--error {
+  border-color: rgba(248, 113, 113, 0.85);
+  box-shadow:
+    0 0 0 1px rgba(248, 113, 113, 0.35),
+    0 8px 24px -12px rgba(248, 113, 113, 0.35);
+}
+
+.timeline-command-frame__progress {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  background: linear-gradient(
+    90deg,
+    color-mix(
+      in srgb,
+      var(--command-frame-color, rgba(96, 165, 250, 0.85)) 60%,
+      transparent
+    ),
+    transparent 85%
+  );
+  transition: width 0.5s ease-out;
+  opacity: 0.9;
+}
+
+.timeline-command-frame--preview::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    120deg,
+    transparent 0,
+    transparent 12px,
+    color-mix(
+        in srgb,
+        var(--command-frame-color, rgba(96, 165, 250, 0.85)) 25%,
+        transparent
+      )
+      12px,
+    color-mix(
+        in srgb,
+        var(--command-frame-color, rgba(96, 165, 250, 0.85)) 25%,
+        transparent
+      )
+      24px
+  );
+  animation: timelineCommandPreview 1.2s linear infinite;
+  opacity: 0.6;
+}
+
+@keyframes timelineCommandPreview {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(24px);
   }
 }

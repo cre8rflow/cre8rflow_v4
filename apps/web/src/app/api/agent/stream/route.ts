@@ -15,11 +15,36 @@ export const runtime = "nodejs";
 /**
  * Helper function to send SSE-formatted data
  */
-function sseSend(
-  controller: ReadableStreamDefaultController,
-  data: unknown
-): void {
-  controller.enqueue(`data: ${JSON.stringify(data)}\n\n`);
+type SseController = {
+  enqueue: ReadableStreamDefaultController["enqueue"];
+  close: ReadableStreamDefaultController["close"];
+};
+
+function createSseHelpers(controller: ReadableStreamDefaultController) {
+  let closed = false;
+
+  const safeClose = () => {
+    if (!closed) {
+      closed = true;
+      try {
+        controller.close();
+      } catch (error) {
+        console.error("SSE close failed", error);
+      }
+    }
+  };
+
+  const safeSend = (data: unknown) => {
+    if (closed) return;
+    try {
+      controller.enqueue(`data: ${JSON.stringify(data)}\n\n`);
+    } catch (error) {
+      closed = true;
+      console.error("SSE send failed", error);
+    }
+  };
+
+  return { safeSend, safeClose, isClosed: () => closed };
 }
 
 /**
@@ -32,6 +57,7 @@ export async function GET(request: NextRequest) {
 
   const stream = new ReadableStream({
     start(controller) {
+      const { safeSend, safeClose, isClosed } = createSseHelpers(controller);
       try {
         // Parse metadata safely
         let metadata: AgentRequestPayload["metadata"] = {};
@@ -41,23 +67,35 @@ export async function GET(request: NextRequest) {
 
         // Start with planning log
         const aiFirst = env.AGENT_PLANNER_FALLBACK === "false";
-        sseSend(controller, { event: "log", message: `Planning for: ${prompt}` });
-        sseSend(controller, { event: "log", message: `Planner mode: ${aiFirst ? "AI-first (no fallback)" : "AI+fallback"}` });
+        safeSend({ event: "log", message: `Planning for: ${prompt}` });
+        safeSend({
+          event: "log",
+          message: `Planner mode: ${aiFirst ? "AI-first (no fallback)" : "AI+fallback"}`,
+        });
         if (env.OPENAI_API_KEY) {
           const model = env.OPENAI_MODEL || "gpt-4o-mini";
           const configured = env.OPENAI_RESP_FORMAT || "json_object";
-          const effective = configured === "json_schema" ? "json_object (downgraded)" : configured;
-          sseSend(controller, { event: "log", message: `Calling OpenAI model: ${model} (response_format=${effective})` });
+          const effective =
+            configured === "json_schema"
+              ? "json_object (downgraded)"
+              : configured;
+          safeSend({
+            event: "log",
+            message: `Calling OpenAI model: ${model} (response_format=${effective})`,
+          });
         } else {
-          sseSend(controller, { event: "log", message: "No OPENAI_API_KEY set; using heuristic." });
+          safeSend({
+            event: "log",
+            message: "No OPENAI_API_KEY set; using heuristic.",
+          });
         }
 
         // Call planner (OpenAI if configured, else fallback heuristics)
         planInstructions({ prompt, metadata })
           .then(async (result) => {
             if (!result.ok) {
-              sseSend(controller, { event: "error", message: result.error });
-              controller.close();
+              safeSend({ event: "error", message: result.error });
+              safeClose();
               return;
             }
 
@@ -66,29 +104,46 @@ export async function GET(request: NextRequest) {
             for (const instr of result.steps) {
               if (instr.type === "twelvelabs.search") {
                 const query = instr.query;
-                sseSend(controller, { event: "log", message: `Calling TwelveLabs for: ${query}` });
+                safeSend({
+                  event: "log",
+                  message: `Calling TwelveLabs for: ${query}`,
+                });
 
                 // Check indexing readiness using Supabase (projectId from metadata)
                 const projectId = (metadata as any).projectId;
                 if (projectId) {
                   try {
                     const jobs = await getMediaIndexJobs(projectId);
-                    const readyCount = jobs.filter((j) => j.status === "ready").length;
+                    const readyCount = jobs.filter(
+                      (j) => j.status === "ready"
+                    ).length;
                     if (readyCount === 0) {
-                      sseSend(controller, { event: "log", message: "Still analyzing video(s). Try again after indexing completes." });
+                      safeSend({
+                        event: "log",
+                        message:
+                          "Still analyzing video(s). Try again after indexing completes.",
+                      });
                       // Skip this step gracefully
                       continue;
                     }
                   } catch (e) {
-                    sseSend(controller, { event: "log", message: "Could not verify indexing status; proceeding to search." });
+                    safeSend({
+                      event: "log",
+                      message:
+                        "Could not verify indexing status; proceeding to search.",
+                    });
                   }
                 }
 
                 try {
                   const userId = "default-user";
-                  const videoIdsUsed: string[] | undefined = (metadata as any).videoIdsUsed;
+                  const videoIdsUsed: string[] | undefined = (metadata as any)
+                    .videoIdsUsed;
                   if (videoIdsUsed && videoIdsUsed.length) {
-                    sseSend(controller, { event: "log", message: `Restricting search to ${videoIdsUsed.length} video(s) on timeline` });
+                    safeSend({
+                      event: "log",
+                      message: `Restricting search to ${videoIdsUsed.length} video(s) on timeline`,
+                    });
                   }
                   const searchResp = await twelveLabsService.searchVideos(
                     userId,
@@ -96,13 +151,35 @@ export async function GET(request: NextRequest) {
                     { page_limit: 1, threshold: "medium" },
                     videoIdsUsed
                   );
-                  const top = searchResp.results?.data?.[0];
+                  const allMatches = searchResp.results?.data ?? [];
+                  const filteredMatches =
+                    videoIdsUsed && videoIdsUsed.length
+                      ? allMatches.filter((match) =>
+                          videoIdsUsed.includes(match.video_id)
+                        )
+                      : allMatches;
+
+                  if (allMatches.length && !filteredMatches.length) {
+                    safeSend({
+                      event: "log",
+                      message:
+                        "TwelveLabs returned matches, but none are on the current timeline; ignoring result.",
+                    });
+                  }
+
+                  const top = filteredMatches[0];
                   if (!top) {
-                    sseSend(controller, { event: "log", message: "No TwelveLabs matches found." });
+                    safeSend({
+                      event: "log",
+                      message: "No TwelveLabs matches found.",
+                    });
                     continue;
                   }
 
-                  sseSend(controller, { event: "log", message: `TwelveLabs match: video=${top.video_id} ${top.start.toFixed(2)}s–${top.end.toFixed(2)}s` });
+                  safeSend({
+                    event: "log",
+                    message: `TwelveLabs match: video=${top.video_id} ${top.start.toFixed(2)}s–${top.end.toFixed(2)}s`,
+                  });
                   instructions.push({
                     type: "twelvelabs.applyCut",
                     videoId: top.video_id,
@@ -111,7 +188,10 @@ export async function GET(request: NextRequest) {
                     description: `Cut out matched content (${top.start.toFixed(2)}–${top.end.toFixed(2)}s)`,
                   });
                 } catch (e: any) {
-                  sseSend(controller, { event: "error", message: `TwelveLabs search failed: ${e?.message || e}` });
+                  safeSend({
+                    event: "error",
+                    message: `TwelveLabs search failed: ${e?.message || e}`,
+                  });
                 }
               } else {
                 instructions.push(instr);
@@ -119,21 +199,31 @@ export async function GET(request: NextRequest) {
             }
 
             // Report planner source and hint if any
-            sseSend(controller, { event: "log", message: `Planner source: ${result.source}` });
+            safeSend({
+              event: "log",
+              message: `Planner source: ${result.source}`,
+            });
             if (result.hint) {
-              sseSend(controller, { event: "log", message: `Planner hint: ${result.hint}` });
+              safeSend({
+                event: "log",
+                message: `Planner hint: ${result.hint}`,
+              });
             }
-            sseSend(controller, { event: "log", message: `Planned ${instructions.length} step(s)` });
+
+            safeSend({
+              event: "log",
+              message: `Planned ${instructions.length} step(s)`,
+            });
 
             if (instructions.length === 0) {
-              sseSend(controller, { event: "error", message: "No steps planned" });
-              controller.close();
+              safeSend({ event: "error", message: "No steps planned" });
+              safeClose();
               return;
             }
 
             // Stream each planned step
             for (let i = 0; i < instructions.length; i++) {
-              sseSend(controller, {
+              safeSend({
                 event: "step",
                 stepIndex: i,
                 totalSteps: instructions.length,
@@ -141,23 +231,23 @@ export async function GET(request: NextRequest) {
               });
             }
 
-            sseSend(controller, { event: "done", message: "All steps dispatched" });
-            controller.close();
+            safeSend({ event: "done", message: "All steps dispatched" });
+            safeClose();
           })
           .catch((err) => {
-            sseSend(controller, {
+            safeSend({
               event: "error",
               message: err instanceof Error ? err.message : "Planner failed",
             });
-            controller.close();
+            safeClose();
           });
       } catch (error) {
         // Handle any errors during processing
-        sseSend(controller, {
+        safeSend({
           event: "error",
           message: error instanceof Error ? error.message : "Unknown error",
         });
-        controller.close();
+        safeClose();
       }
     },
   });

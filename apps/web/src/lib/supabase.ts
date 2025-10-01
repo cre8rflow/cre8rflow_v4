@@ -39,16 +39,22 @@ async function supabaseFetch(url: string, options: RequestInit = {}) {
     );
   }
 
-  const response = await fetch(`${env.SUPABASE_URL}/rest/v1/${url}`, {
-    ...options,
-    headers: {
-      "apikey": env.SUPABASE_SERVICE_KEY,
-      "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-      "Content-Type": "application/json",
-      "Prefer": "return=representation",
-      ...options.headers,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${env.SUPABASE_URL}/rest/v1/${url}`, {
+      ...options,
+      headers: {
+        "apikey": env.SUPABASE_SERVICE_KEY,
+        "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+        ...options.headers,
+      },
+    });
+  } catch (error) {
+    console.error("Supabase request failed before reaching the server", error);
+    throw error;
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -265,8 +271,13 @@ export async function getMediaIndexJobs(
     const filter = mediaIds.map((id) => `"${id}"`).join(",");
     url += `&media_id=in.(${filter})`;
   }
-  const response = await supabaseFetch(url, { method: "GET" });
-  return response.json();
+  try {
+    const response = await supabaseFetch(url, { method: "GET" });
+    return response.json();
+  } catch (error) {
+    console.error("Failed to get media index jobs:", error);
+    return [];
+  }
 }
 
 /**

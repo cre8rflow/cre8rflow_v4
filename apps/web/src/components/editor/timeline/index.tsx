@@ -71,6 +71,7 @@ import { Slider } from "@/components/ui/slider";
 import { formatTimeCode } from "@/lib/time";
 import { EditableTimecode } from "@/components/ui/editable-timecode";
 import { TimelineToolbar } from "./timeline-toolbar";
+import { TimelineCommandStatusBar } from "./timeline-command-status";
 
 export function Timeline() {
   // Timeline shows all tracks (video, audio, effects) and their elements.
@@ -415,7 +416,14 @@ export function Timeline() {
     if (currentTime > maxTime) {
       seek(maxTime);
     }
-  }, [tracks, currentTime, duration, seek, getTotalDuration, activeProject?.fps]);
+  }, [
+    tracks,
+    currentTime,
+    duration,
+    seek,
+    getTotalDuration,
+    activeProject?.fps,
+  ]);
 
   // Old marquee system removed - using new SelectionBox component instead
 
@@ -620,6 +628,7 @@ export function Timeline() {
         onMouseEnter={() => setIsInTimeline(true)}
         onMouseLeave={() => setIsInTimeline(false)}
       >
+        <TimelineCommandStatusBar />
         {isDragOver && (
           <div className="pointer-events-none absolute inset-0 z-20 rounded-2xl border-2 border-primary/50 bg-primary/10 backdrop-blur-sm" />
         )}
@@ -627,299 +636,305 @@ export function Timeline() {
           className="flex h-full flex-col overflow-hidden relative"
           ref={timelineRef}
         >
-        <TimelinePlayhead
-          currentTime={currentTime}
-          duration={duration}
-          zoomLevel={zoomLevel}
-          tracks={tracks}
-          seek={seek}
-          rulerRef={rulerRef}
-          rulerScrollRef={rulerScrollRef}
-          tracksScrollRef={tracksScrollRef}
-          trackLabelsRef={trackLabelsRef}
-          timelineRef={timelineRef}
-          playheadRef={playheadRef}
-          isSnappingToPlayhead={
-            showSnapIndicator && currentSnapPoint?.type === "playhead"
-          }
-        />
-        <SnapIndicator
-          snapPoint={currentSnapPoint}
-          zoomLevel={zoomLevel}
-          tracks={tracks}
-          timelineRef={timelineRef}
-          trackLabelsRef={trackLabelsRef}
-          tracksScrollRef={tracksScrollRef}
-          isVisible={showSnapIndicator}
-        />
-        {/* Timeline Header with Ruler */}
-        <div className="sticky top-0 z-10 flex bg-surface-elevated/80">
-          {/* Track Labels Header */}
-          <div className="flex w-28 shrink-0 items-center justify-between border-r border-border/20 bg-surface-elevated/70 px-3 py-2">
-            {/* Empty space */}
-            <span className="text-sm font-medium text-muted-foreground opacity-0">
-              .
-            </span>
-          </div>
+          <TimelinePlayhead
+            currentTime={currentTime}
+            duration={duration}
+            zoomLevel={zoomLevel}
+            tracks={tracks}
+            seek={seek}
+            rulerRef={rulerRef}
+            rulerScrollRef={rulerScrollRef}
+            tracksScrollRef={tracksScrollRef}
+            trackLabelsRef={trackLabelsRef}
+            timelineRef={timelineRef}
+            playheadRef={playheadRef}
+            isSnappingToPlayhead={
+              showSnapIndicator && currentSnapPoint?.type === "playhead"
+            }
+          />
+          <SnapIndicator
+            snapPoint={currentSnapPoint}
+            zoomLevel={zoomLevel}
+            tracks={tracks}
+            timelineRef={timelineRef}
+            trackLabelsRef={trackLabelsRef}
+            tracksScrollRef={tracksScrollRef}
+            isVisible={showSnapIndicator}
+          />
+          {/* Timeline Header with Ruler */}
+          <div className="sticky top-0 z-10 flex bg-surface-elevated/80">
+            {/* Track Labels Header */}
+            <div className="flex w-28 shrink-0 items-center justify-between border-r border-border/20 bg-surface-elevated/70 px-3 py-2">
+              {/* Empty space */}
+              <span className="text-sm font-medium text-muted-foreground opacity-0">
+                .
+              </span>
+            </div>
 
-          {/* Timeline Ruler */}
-          <div
-            className="relative h-10 flex-1 overflow-hidden"
-            onWheel={(e) => {
-              // Check if this is horizontal scrolling - if so, don't handle it here
-              if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-                return; // Let ScrollArea handle horizontal scrolling
-              }
-              handleWheel(e);
-            }}
-            onMouseDown={handleSelectionMouseDown}
-            onClick={handleTimelineContentClick}
-            data-ruler-area
-          >
-            <ScrollArea
-              className="w-full"
-              ref={rulerScrollRef}
-              onScroll={(e) => {
-                if (isUpdatingRef.current) return;
-                isUpdatingRef.current = true;
-                const tracksViewport = tracksScrollRef.current;
-                if (tracksViewport) {
-                  tracksViewport.scrollLeft = (
-                    e.currentTarget as HTMLDivElement
-                  ).scrollLeft;
-                }
-                isUpdatingRef.current = false;
-              }}
-            >
-              <div
-                ref={rulerRef}
-                className="relative h-10 select-none cursor-default"
-                style={{
-                  width: `${dynamicTimelineWidth}px`,
-                }}
-                onMouseDown={handleRulerMouseDown}
-              >
-                <TimelineCacheIndicator
-                  duration={duration}
-                  zoomLevel={zoomLevel}
-                  tracks={tracks}
-                  mediaFiles={mediaFiles}
-                  activeProject={activeProject}
-                  getRenderStatus={getRenderStatus}
-                />
-                {/* Time markers */}
-                {(() => {
-                  // Calculate appropriate time interval based on zoom level
-                  const getTimeInterval = (zoom: number) => {
-                    const pixelsPerSecond =
-                      TIMELINE_CONSTANTS.PIXELS_PER_SECOND * zoom;
-                    if (pixelsPerSecond >= 200) return 0.1; // Every 0.1s when very zoomed in
-                    if (pixelsPerSecond >= 100) return 0.5; // Every 0.5s when zoomed in
-                    if (pixelsPerSecond >= 50) return 1; // Every 1s at normal zoom
-                    if (pixelsPerSecond >= 25) return 2; // Every 2s when zoomed out
-                    if (pixelsPerSecond >= 12) return 5; // Every 5s when more zoomed out
-                    if (pixelsPerSecond >= 6) return 10; // Every 10s when very zoomed out
-                    return 30; // Every 30s when extremely zoomed out
-                  };
-
-                  const interval = getTimeInterval(zoomLevel);
-                  const markerCount = Math.ceil(duration / interval) + 1;
-
-                  return Array.from({ length: markerCount }, (_, i) => {
-                    const time = i * interval;
-                    if (time > duration) return null;
-
-                    const isMainMarker =
-                      time % (interval >= 1 ? Math.max(1, interval) : 1) === 0;
-
-                    return (
-                      <TimelineMarker
-                        key={i}
-                        time={time}
-                        zoomLevel={zoomLevel}
-                        interval={interval}
-                        isMainMarker={isMainMarker}
-                      />
-                    );
-                  }).filter(Boolean);
-                })()}
-
-                {/* Bookmark markers */}
-                {(() => {
-                  const { activeProject } = useProjectStore.getState();
-                  if (!activeProject?.bookmarks?.length) return null;
-
-                  return activeProject.bookmarks.map((bookmarkTime, i) => (
-                    <div
-                      key={`bookmark-${i}`}
-                      className="absolute top-0 h-10 w-0.5 !bg-primary cursor-pointer"
-                      style={{
-                        left: `${bookmarkTime * TIMELINE_CONSTANTS.PIXELS_PER_SECOND * zoomLevel}px`,
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        usePlaybackStore.getState().seek(bookmarkTime);
-                      }}
-                    >
-                      <div className="absolute top-[-1px] left-[-5px] text-primary">
-                        <Bookmark className="h-3 w-3 fill-primary" />
-                      </div>
-                    </div>
-                  ));
-                })()}
-              </div>
-            </ScrollArea>
-          </div>
-        </div>
-
-        {/* Tracks Area */}
-        <div className="flex-1 flex overflow-hidden">
-          {/* Track Labels */}
-          {tracks.length > 0 && (
+            {/* Timeline Ruler */}
             <div
-              ref={trackLabelsRef}
-              className="z-100 w-28 shrink-0 overflow-y-auto border-r border-border/20 bg-surface-elevated/70"
-              data-track-labels
+              className="relative h-10 flex-1 overflow-hidden"
+              onWheel={(e) => {
+                // Check if this is horizontal scrolling - if so, don't handle it here
+                if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+                  return; // Let ScrollArea handle horizontal scrolling
+                }
+                handleWheel(e);
+              }}
+              onMouseDown={handleSelectionMouseDown}
+              onClick={handleTimelineContentClick}
+              data-ruler-area
             >
-              <ScrollArea className="w-full h-full" ref={trackLabelsScrollRef}>
-                <div className="flex flex-col gap-1 py-2">
-                  {tracks.map((track) => (
-                    <div
-                      key={track.id}
-                      className="group flex items-center px-3"
-                      style={{ height: `${getTrackHeight(track.type)}px` }}
-                    >
-                      <div className="flex min-w-0 flex-1 items-center justify-end gap-2 text-xs text-muted-foreground">
-                        {track.muted ? (
-                          <VolumeOff
-                            className="h-4 w-4 text-destructive cursor-pointer"
-                            onClick={() => toggleTrackMute(track.id)}
-                          />
-                        ) : (
-                          <Volume2
-                            className="h-4 w-4 text-muted-foreground cursor-pointer"
-                            onClick={() => toggleTrackMute(track.id)}
-                          />
-                        )}
-                        <Eye className="h-4 w-4 text-muted-foreground" />
-                        <TrackIcon track={track} />
+              <ScrollArea
+                className="w-full"
+                ref={rulerScrollRef}
+                onScroll={(e) => {
+                  if (isUpdatingRef.current) return;
+                  isUpdatingRef.current = true;
+                  const tracksViewport = tracksScrollRef.current;
+                  if (tracksViewport) {
+                    tracksViewport.scrollLeft = (
+                      e.currentTarget as HTMLDivElement
+                    ).scrollLeft;
+                  }
+                  isUpdatingRef.current = false;
+                }}
+              >
+                <div
+                  ref={rulerRef}
+                  className="relative h-10 select-none cursor-default"
+                  style={{
+                    width: `${dynamicTimelineWidth}px`,
+                  }}
+                  onMouseDown={handleRulerMouseDown}
+                >
+                  <TimelineCacheIndicator
+                    duration={duration}
+                    zoomLevel={zoomLevel}
+                    tracks={tracks}
+                    mediaFiles={mediaFiles}
+                    activeProject={activeProject}
+                    getRenderStatus={getRenderStatus}
+                  />
+                  {/* Time markers */}
+                  {(() => {
+                    // Calculate appropriate time interval based on zoom level
+                    const getTimeInterval = (zoom: number) => {
+                      const pixelsPerSecond =
+                        TIMELINE_CONSTANTS.PIXELS_PER_SECOND * zoom;
+                      if (pixelsPerSecond >= 200) return 0.1; // Every 0.1s when very zoomed in
+                      if (pixelsPerSecond >= 100) return 0.5; // Every 0.5s when zoomed in
+                      if (pixelsPerSecond >= 50) return 1; // Every 1s at normal zoom
+                      if (pixelsPerSecond >= 25) return 2; // Every 2s when zoomed out
+                      if (pixelsPerSecond >= 12) return 5; // Every 5s when more zoomed out
+                      if (pixelsPerSecond >= 6) return 10; // Every 10s when very zoomed out
+                      return 30; // Every 30s when extremely zoomed out
+                    };
+
+                    const interval = getTimeInterval(zoomLevel);
+                    const markerCount = Math.ceil(duration / interval) + 1;
+
+                    return Array.from({ length: markerCount }, (_, i) => {
+                      const time = i * interval;
+                      if (time > duration) return null;
+
+                      const isMainMarker =
+                        time % (interval >= 1 ? Math.max(1, interval) : 1) ===
+                        0;
+
+                      return (
+                        <TimelineMarker
+                          key={i}
+                          time={time}
+                          zoomLevel={zoomLevel}
+                          interval={interval}
+                          isMainMarker={isMainMarker}
+                        />
+                      );
+                    }).filter(Boolean);
+                  })()}
+
+                  {/* Bookmark markers */}
+                  {(() => {
+                    const { activeProject } = useProjectStore.getState();
+                    if (!activeProject?.bookmarks?.length) return null;
+
+                    return activeProject.bookmarks.map((bookmarkTime, i) => (
+                      <div
+                        key={`bookmark-${i}`}
+                        className="absolute top-0 h-10 w-0.5 !bg-primary cursor-pointer"
+                        style={{
+                          left: `${bookmarkTime * TIMELINE_CONSTANTS.PIXELS_PER_SECOND * zoomLevel}px`,
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          usePlaybackStore.getState().seek(bookmarkTime);
+                        }}
+                      >
+                        <div className="absolute top-[-1px] left-[-5px] text-primary">
+                          <Bookmark className="h-3 w-3 fill-primary" />
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ));
+                  })()}
                 </div>
               </ScrollArea>
             </div>
-          )}
+          </div>
 
-          {/* Timeline Tracks Content */}
-          <div
-            className="flex-1 relative overflow-hidden"
-            onWheel={(e) => {
-              // Check if this is horizontal scrolling - if so, don't handle it here
-              if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-                return; // Let ScrollArea handle horizontal scrolling
-              }
-              handleWheel(e);
-            }}
-            onMouseDown={(e) => {
-              handleTimelineMouseDown(e);
-              handleSelectionMouseDown(e);
-            }}
-            onClick={handleTimelineContentClick}
-            ref={tracksContainerRef}
-          >
-            <SelectionBox
-              startPos={selectionBox?.startPos || null}
-              currentPos={selectionBox?.currentPos || null}
-              containerRef={tracksContainerRef}
-              isActive={selectionBox?.isActive || false}
-            />
-            <ScrollArea
-              className="w-full h-full"
-              ref={tracksScrollRef}
-              onScroll={(e) => {
-                if (isUpdatingRef.current) return;
-                isUpdatingRef.current = true;
-                const rulerViewport = rulerScrollRef.current;
-                if (rulerViewport) {
-                  rulerViewport.scrollLeft = (
-                    e.currentTarget as HTMLDivElement
-                  ).scrollLeft;
-                }
-                isUpdatingRef.current = false;
-              }}
-            >
+          {/* Tracks Area */}
+          <div className="flex-1 flex overflow-hidden">
+            {/* Track Labels */}
+            {tracks.length > 0 && (
               <div
-                className="relative flex-1"
-                style={{
-                  height: `${Math.max(
-                    200,
-                    Math.min(800, getTotalTracksHeight(tracks))
-                  )}px`,
-                  width: `${dynamicTimelineWidth}px`,
+                ref={trackLabelsRef}
+                className="z-100 w-28 shrink-0 overflow-y-auto border-r border-border/20 bg-surface-elevated/70"
+                data-track-labels
+              >
+                <ScrollArea
+                  className="w-full h-full"
+                  ref={trackLabelsScrollRef}
+                >
+                  <div className="flex flex-col gap-1 py-2">
+                    {tracks.map((track) => (
+                      <div
+                        key={track.id}
+                        className="group flex items-center px-3"
+                        style={{ height: `${getTrackHeight(track.type)}px` }}
+                      >
+                        <div className="flex min-w-0 flex-1 items-center justify-end gap-2 text-xs text-muted-foreground">
+                          {track.muted ? (
+                            <VolumeOff
+                              className="h-4 w-4 text-destructive cursor-pointer"
+                              onClick={() => toggleTrackMute(track.id)}
+                            />
+                          ) : (
+                            <Volume2
+                              className="h-4 w-4 text-muted-foreground cursor-pointer"
+                              onClick={() => toggleTrackMute(track.id)}
+                            />
+                          )}
+                          <Eye className="h-4 w-4 text-muted-foreground" />
+                          <TrackIcon track={track} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+            )}
+
+            {/* Timeline Tracks Content */}
+            <div
+              className="flex-1 relative overflow-hidden"
+              onWheel={(e) => {
+                // Check if this is horizontal scrolling - if so, don't handle it here
+                if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+                  return; // Let ScrollArea handle horizontal scrolling
+                }
+                handleWheel(e);
+              }}
+              onMouseDown={(e) => {
+                handleTimelineMouseDown(e);
+                handleSelectionMouseDown(e);
+              }}
+              onClick={handleTimelineContentClick}
+              ref={tracksContainerRef}
+            >
+              <SelectionBox
+                startPos={selectionBox?.startPos || null}
+                currentPos={selectionBox?.currentPos || null}
+                containerRef={tracksContainerRef}
+                isActive={selectionBox?.isActive || false}
+              />
+              <ScrollArea
+                className="w-full h-full"
+                ref={tracksScrollRef}
+                onScroll={(e) => {
+                  if (isUpdatingRef.current) return;
+                  isUpdatingRef.current = true;
+                  const rulerViewport = rulerScrollRef.current;
+                  if (rulerViewport) {
+                    rulerViewport.scrollLeft = (
+                      e.currentTarget as HTMLDivElement
+                    ).scrollLeft;
+                  }
+                  isUpdatingRef.current = false;
                 }}
               >
-                {tracks.length === 0 ? (
-                  <div />
-                ) : (
-                  <>
-                    {tracks.map((track, index) => (
-                      <ContextMenu key={track.id}>
-                        <ContextMenuTrigger asChild>
-                          <div
-                            className="absolute left-0 right-0 px-3"
-                            style={{
-                              top: `${getCumulativeHeightBefore(
-                                tracks,
-                                index
-                              )}px`,
-                              height: `${getTrackHeight(track.type)}px`,
-                            }}
-                            onClick={(e) => {
-                              // If clicking empty area (not on a element), deselect all elements
-                              if (
-                                !(e.target as HTMLElement).closest(
-                                  ".timeline-element"
-                                )
-                              ) {
-                                clearSelectedElements();
-                              }
-                            }}
-                          >
-                            <TimelineTrackContent
-                              track={track}
-                              zoomLevel={zoomLevel}
-                              onSnapPointChange={handleSnapPointChange}
-                              rulerScrollRef={rulerScrollRef}
-                              tracksScrollRef={tracksScrollRef}
-                            />
-                          </div>
-                        </ContextMenuTrigger>
-                        <ContextMenuContent className="z-200">
-                          <ContextMenuItem
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleTrackMute(track.id);
-                            }}
-                          >
-                            {track.muted ? "Unmute Track" : "Mute Track"}
-                          </ContextMenuItem>
-                          <ContextMenuItem onClick={(e) => e.stopPropagation()}>
-                            Track settings (soon)
-                          </ContextMenuItem>
-                        </ContextMenuContent>
-                      </ContextMenu>
-                    ))}
-                  </>
-                )}
-              </div>
-            </ScrollArea>
+                <div
+                  className="relative flex-1"
+                  style={{
+                    height: `${Math.max(
+                      200,
+                      Math.min(800, getTotalTracksHeight(tracks))
+                    )}px`,
+                    width: `${dynamicTimelineWidth}px`,
+                  }}
+                >
+                  {tracks.length === 0 ? (
+                    <div />
+                  ) : (
+                    <>
+                      {tracks.map((track, index) => (
+                        <ContextMenu key={track.id}>
+                          <ContextMenuTrigger asChild>
+                            <div
+                              className="absolute left-0 right-0 px-3"
+                              style={{
+                                top: `${getCumulativeHeightBefore(
+                                  tracks,
+                                  index
+                                )}px`,
+                                height: `${getTrackHeight(track.type)}px`,
+                              }}
+                              onClick={(e) => {
+                                // If clicking empty area (not on a element), deselect all elements
+                                if (
+                                  !(e.target as HTMLElement).closest(
+                                    ".timeline-element"
+                                  )
+                                ) {
+                                  clearSelectedElements();
+                                }
+                              }}
+                            >
+                              <TimelineTrackContent
+                                track={track}
+                                zoomLevel={zoomLevel}
+                                onSnapPointChange={handleSnapPointChange}
+                                rulerScrollRef={rulerScrollRef}
+                                tracksScrollRef={tracksScrollRef}
+                              />
+                            </div>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent className="z-200">
+                            <ContextMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleTrackMute(track.id);
+                              }}
+                            >
+                              {track.muted ? "Unmute Track" : "Mute Track"}
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              Track settings (soon)
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        </ContextMenu>
+                      ))}
+                    </>
+                  )}
+                </div>
+              </ScrollArea>
+            </div>
           </div>
         </div>
       </div>
     </div>
-  </div>
-);
+  );
 }
 
 function TrackIcon({ track }: { track: TimelineTrack }) {

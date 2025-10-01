@@ -35,7 +35,10 @@ function createSafeRateLimiter() {
         } catch (e) {
           // In local/dev environments, allow requests if rate-limit backend is down
           if (env.NODE_ENV !== "production") {
-            console.warn("Rate limit backend unavailable – allowing request", e);
+            console.warn(
+              "Rate limit backend unavailable – allowing request",
+              e
+            );
             return { success: true } as const;
           }
           // In prod, fail closed (but keep response shape)

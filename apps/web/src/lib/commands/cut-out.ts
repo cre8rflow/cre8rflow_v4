@@ -22,6 +22,7 @@ import {
   CUT_OUT_ERROR_MESSAGES,
   EPSILON,
 } from "./utils";
+import { emitCutHighlights } from "@/lib/timeline-highlights";
 
 /**
  * Convert V4 TimelineElement to ElementCommandData for command operations
@@ -209,7 +210,9 @@ function applyCutOut(
       const EPS_SNAP = 1e-3;
       const SNAP_WINDOW = 0.05; // 50ms window to catch near-neighbor start times
       const postDeleteTimeline = useTimelineStore.getState();
-      const postTrack = postDeleteTimeline.tracks.find((t) => t.id === element.trackId);
+      const postTrack = postDeleteTimeline.tracks.find(
+        (t) => t.id === element.trackId
+      );
       if (postTrack) {
         const elementStartTime = element.startTime;
         const neighbor = postTrack.elements
@@ -302,9 +305,9 @@ export function cutOut({ plan }: { plan: CutOutPlan }): CutOutResult {
   }
 
   // Apply cut-out to each target element
-  let totalUpdated: UpdatedElement[] = [];
-  let totalDeleted: ElementTarget[] = [];
-  let totalCreated: ElementTarget[] = [];
+  const totalUpdated: UpdatedElement[] = [];
+  const totalDeleted: ElementTarget[] = [];
+  const totalCreated: ElementTarget[] = [];
   let totalRemovedDuration = 0;
   let skippedCount = 0;
 
@@ -338,6 +341,51 @@ export function cutOut({ plan }: { plan: CutOutPlan }): CutOutResult {
       skipped: skippedCount,
       error,
     };
+  }
+
+  if (!plan.options?.dryRun) {
+    const highlightMap = new Map<
+      string,
+      { target: ElementTarget; includeAttachments?: boolean }
+    >();
+
+    const trackElementKey = (target: ElementTarget) =>
+      `${target.trackId}:${target.elementId}`;
+
+    const pushTarget = (
+      target: ElementTarget,
+      includeAttachments?: boolean
+    ) => {
+      const key = trackElementKey(target);
+      const existing = highlightMap.get(key);
+      if (existing) {
+        if (includeAttachments && !existing.includeAttachments) {
+          highlightMap.set(key, { target, includeAttachments: true });
+        }
+        return;
+      }
+      highlightMap.set(key, { target, includeAttachments });
+    };
+
+    targetElements.forEach((element) =>
+      pushTarget({ trackId: element.trackId, elementId: element.id }, true)
+    );
+    totalUpdated.forEach((entry) => pushTarget(entry, false));
+    totalCreated.forEach((entry) => pushTarget(entry, false));
+
+    const items = Array.from(highlightMap.values()).map((value) => ({
+      target: value.target,
+      includeAttachments: value.includeAttachments,
+    }));
+
+    if (items.length > 0) {
+      emitCutHighlights({
+        items,
+        includeAttachments: true,
+        ttl: 3000,
+        meta: { source: "cut-out", scope: plan.scope },
+      });
+    }
   }
 
   // Show success notification unless disabled

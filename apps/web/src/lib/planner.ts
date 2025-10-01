@@ -5,8 +5,8 @@
  */
 
 import { env } from "@/env";
-import type { AgentRequestPayload, AnyInstruction } from "@/types/agent";
-import { AnyInstructionSchema } from "@/types/agent";
+import type { AgentRequestPayload, TargetSpec } from "@/types/agent";
+import { AnyInstructionSchema, type AnyInstruction } from "@/types/agent";
 import { z } from "zod";
 
 // Response schema: { steps: AnyInstruction[] }
@@ -16,9 +16,9 @@ const PlannerResponseSchema = z.object({
 
 export type PlannerSource =
   | "openai" // first try succeeded
-  | "retry"   // corrective retry succeeded
+  | "retry" // corrective retry succeeded
   | "fallback" // heuristic fallback used
-  | "no-key";  // no OPENAI key, heuristic used
+  | "no-key"; // no OPENAI key, heuristic used
 
 export type PlannerResult =
   | {
@@ -66,13 +66,16 @@ Hard rules:
   {"kind":"clipAtTime","time":number}
   {"kind":"lastClip","track"?:"media"|"audio"|"text"|"all"|{"id":string}}
   {"kind":"nthClip","index":number,"track"?:"media"|"audio"|"text"|"all"|{"id":string}}
+    NOTE: index is 1-based (first clip = 1, second = 2, etc.). 0 will be auto-corrected to 1.
   {"kind":"clipsOverlappingRange","start":number,"end":number,"track"?:"media"|"audio"|"text"|"all"|{"id":string}}
 - RangeSpec: one of
   {"mode":"elementSeconds","start":number,"end":number}
   {"mode":"globalSeconds","start":number,"end":number}
   {"mode":"aroundPlayhead","left":number,"right":number}
-- TrimSide: one of
-  {"mode":"toSeconds","time":number} | {"mode":"toPlayhead"} | {"mode":"deltaSeconds","delta":number}
+- TrimSide: REQUIRED fields per mode:
+  {"mode":"toSeconds","time":number} - time is REQUIRED
+  {"mode":"toPlayhead"} - no additional fields
+  {"mode":"deltaSeconds","delta":number} - delta is REQUIRED
 - Numbers MUST be numbers (not strings), non-negative.
 - Prefer {"mode":"globalSeconds"} when the prompt contains absolute times (e.g., 2–3 seconds).
 - IMPORTANT semantic mapping:
@@ -109,10 +112,7 @@ Hard rules:
       },
       body: JSON.stringify({
         model,
-        messages: [
-          { role: "system", content: system },
-          user,
-        ],
+        messages: [{ role: "system", content: system }, user],
         temperature: 0,
         response_format,
       }),
@@ -120,7 +120,11 @@ Hard rules:
 
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
-      return { ok: false, error: `OpenAI error ${resp.status}: ${text}`, source: "openai" };
+      return {
+        ok: false,
+        error: `OpenAI error ${resp.status}: ${text}`,
+        source: "openai",
+      };
     }
 
     const data = await resp.json();
@@ -138,13 +142,18 @@ Hard rules:
     }
 
     // First validation
-    let validated = PlannerResponseSchema.safeParse(parsed);
+    const validated = PlannerResponseSchema.safeParse(parsed);
     if (!validated.success) {
       // Try a corrective retry with error feedback
       const hint = summarizeZodError(validated.error);
       const retry = await correctiveRetry({ model, system, user, hint });
       if (retry.ok) {
-        return { ok: true, steps: normalizePlannedSteps(prompt, retry.steps), source: "retry", hint };
+        return {
+          ok: true,
+          steps: normalizePlannedSteps(prompt, retry.steps),
+          source: "retry",
+          hint,
+        };
       }
 
       // Final decision: fallback or error based on env
@@ -152,15 +161,25 @@ Hard rules:
         const fallback = mockPlan(prompt);
         return { ok: true, steps: fallback, source: "fallback", hint };
       }
-      return { ok: false, error: `Planner invalid output: ${hint}`, source: "retry", hint };
+      return {
+        ok: false,
+        error: `Planner invalid output: ${hint}`,
+        source: "retry",
+        hint,
+      };
     }
 
-    return { ok: true, steps: normalizePlannedSteps(prompt, validated.data.steps), source: "openai" };
+    return {
+      ok: true,
+      steps: normalizePlannedSteps(prompt, validated.data.steps),
+      source: "openai",
+    };
   } catch (error) {
     // Network or parsing error – retry once without temperature, then decide
     try {
       const model = env.OPENAI_MODEL || "gpt-4o-mini";
-      const system = "You must output only valid JSON for {\"steps\": AnyInstruction[]} with no commentary.";
+      const system =
+        'You must output only valid JSON for {"steps": AnyInstruction[]} with no commentary.';
       const resp2 = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -180,17 +199,27 @@ Hard rules:
       if (resp2.ok) {
         const data2 = await resp2.json();
         const content2 = data2?.choices?.[0]?.message?.content;
-        const parsed2 = typeof content2 === "string" ? JSON.parse(content2) : content2;
+        const parsed2 =
+          typeof content2 === "string" ? JSON.parse(content2) : content2;
         const validated2 = PlannerResponseSchema.safeParse(parsed2);
         if (validated2.success) {
-          return { ok: true, steps: normalizePlannedSteps(prompt, validated2.data.steps), source: "retry" };
+          return {
+            ok: true,
+            steps: normalizePlannedSteps(prompt, validated2.data.steps),
+            source: "retry",
+          };
         }
       }
     } catch {}
 
     if (env.AGENT_PLANNER_FALLBACK !== "false") {
       const fallback = mockPlan(prompt);
-      return { ok: true, steps: fallback, source: "fallback", hint: "network or parse error" };
+      return {
+        ok: true,
+        steps: fallback,
+        source: "fallback",
+        hint: "network or parse error",
+      };
     }
     return {
       ok: false,
@@ -227,11 +256,7 @@ async function correctiveRetry({
     },
     body: JSON.stringify({
       model,
-      messages: [
-        { role: "system", content: system },
-        user,
-        correction,
-      ],
+      messages: [{ role: "system", content: system }, user, correction],
       temperature: 0,
       response_format: { type: "json_object" },
     }),
@@ -242,12 +267,17 @@ async function correctiveRetry({
   }
   const data = await resp.json();
   const content = data?.choices?.[0]?.message?.content;
-  if (!content) return { ok: false, error: "Empty retry content", source: "retry" };
+  if (!content)
+    return { ok: false, error: "Empty retry content", source: "retry" };
   const parsed = typeof content === "string" ? JSON.parse(content) : content;
 
   const validated = PlannerResponseSchema.safeParse(parsed);
   if (!validated.success) {
-    return { ok: false, error: summarizeZodError(validated.error), source: "retry" };
+    return {
+      ok: false,
+      error: summarizeZodError(validated.error),
+      source: "retry",
+    };
   }
 
   return { ok: true, steps: validated.data.steps, source: "retry" };
@@ -346,25 +376,115 @@ const plannerJsonSchema = {
     },
     TargetSpec: {
       oneOf: [
-        { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { const: "clipAtPlayhead" } } },
-        { type: "object", additionalProperties: false, required: ["kind", "time"], properties: { kind: { const: "clipAtTime" }, time: { type: "number", minimum: 0 } } },
-        { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { const: "lastClip" }, track: { $ref: "#/definitions/TrackFilter" } } },
-        { type: "object", additionalProperties: false, required: ["kind", "index"], properties: { kind: { const: "nthClip" }, index: { type: "integer", minimum: 1 }, track: { $ref: "#/definitions/TrackFilter" } } },
-        { type: "object", additionalProperties: false, required: ["kind", "start", "end"], properties: { kind: { const: "clipsOverlappingRange" }, start: { type: "number", minimum: 0 }, end: { type: "number", minimum: 0 }, track: { $ref: "#/definitions/TrackFilter" } } },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind"],
+          properties: { kind: { const: "clipAtPlayhead" } },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "time"],
+          properties: {
+            kind: { const: "clipAtTime" },
+            time: { type: "number", minimum: 0 },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind"],
+          properties: {
+            kind: { const: "lastClip" },
+            track: { $ref: "#/definitions/TrackFilter" },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "index"],
+          properties: {
+            kind: { const: "nthClip" },
+            index: { type: "integer", minimum: 0 },
+            track: { $ref: "#/definitions/TrackFilter" },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "start", "end"],
+          properties: {
+            kind: { const: "clipsOverlappingRange" },
+            start: { type: "number", minimum: 0 },
+            end: { type: "number", minimum: 0 },
+            track: { $ref: "#/definitions/TrackFilter" },
+          },
+        },
       ],
     },
     RangeSpec: {
       oneOf: [
-        { type: "object", additionalProperties: false, required: ["mode", "start", "end"], properties: { mode: { const: "elementSeconds" }, start: { type: "number", minimum: 0 }, end: { type: "number", minimum: 0 } } },
-        { type: "object", additionalProperties: false, required: ["mode", "start", "end"], properties: { mode: { const: "globalSeconds" }, start: { type: "number", minimum: 0 }, end: { type: "number", minimum: 0 } } },
-        { type: "object", additionalProperties: false, required: ["mode", "left", "right"], properties: { mode: { const: "aroundPlayhead" }, left: { type: "number", minimum: 0 }, right: { type: "number", minimum: 0 } } },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["mode", "start", "end"],
+          properties: {
+            mode: { const: "elementSeconds" },
+            start: { type: "number", minimum: 0 },
+            end: { type: "number", minimum: 0 },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["mode", "start", "end"],
+          properties: {
+            mode: { const: "globalSeconds" },
+            start: { type: "number", minimum: 0 },
+            end: { type: "number", minimum: 0 },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["mode", "left", "right"],
+          properties: {
+            mode: { const: "aroundPlayhead" },
+            left: { type: "number", minimum: 0 },
+            right: { type: "number", minimum: 0 },
+          },
+        },
       ],
     },
     TrimSide: {
       oneOf: [
-        { type: "object", additionalProperties: false, required: ["mode", "time"], properties: { mode: { const: "toSeconds" }, time: { type: "number", minimum: 0 } } },
-        { type: "object", additionalProperties: false, required: ["mode"], properties: { mode: { const: "toPlayhead" } } },
-        { type: "object", additionalProperties: false, required: ["mode", "delta"], properties: { mode: { const: "deltaSeconds" }, delta: { type: "number", minimum: 0 } } },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["mode", "time"],
+          properties: {
+            mode: { const: "toSeconds" },
+            time: { type: "number", minimum: 0 },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["mode"],
+          properties: {
+            mode: { const: "toPlayhead" },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["mode", "delta"],
+          properties: {
+            mode: { const: "deltaSeconds" },
+            delta: { type: "number", minimum: 0 },
+          },
+        },
       ],
     },
     BaseOptions: {
@@ -392,66 +512,238 @@ const plannerJsonSchema = {
 } as const;
 
 // Post-processing normalization to correct common semantic mismatches
-import type { AnyInstruction } from "@/types/agent";
 
-function normalizePlannedSteps(prompt: string, steps: AnyInstruction[]): AnyInstruction[] {
+function canonicalInstructionKey(instr: AnyInstruction): string {
+  const clone = JSON.parse(JSON.stringify(instr));
+  delete (clone as any).description;
+  if (
+    (clone as any).options &&
+    Object.keys((clone as any).options).length === 0
+  ) {
+    delete (clone as any).options;
+  }
+  return JSON.stringify(clone);
+}
+
+function normalizePlannedSteps(
+  prompt: string,
+  steps: AnyInstruction[]
+): AnyInstruction[] {
   const lower = prompt.toLowerCase();
+  const explicitRange = extractExplicitTimeRange(prompt);
+  const mentionsCutOut =
+    /\bcut\s*out\b/.test(lower) ||
+    (/\bremove\b/.test(lower) && /\bseconds?\b/.test(lower));
+  const simpleRangeCutRequest = !!explicitRange && mentionsCutOut;
 
   // Extract patterns like "last 2 seconds", "last 3s"
-  const lastMatch = lower.match(/last\s+(\d+(?:\.\d+)?)\s*(?:s|sec|secs|seconds)\b/);
-  const lastSeconds = lastMatch ? parseFloat(lastMatch[1]) : undefined;
+  const lastMatch = lower.match(
+    /last\s+(\d+(?:\.\d+)?)\s*(?:s|sec|secs|seconds)\b/
+  );
+  let lastSeconds = lastMatch ? parseFloat(lastMatch[1]) : undefined;
+  if (lastSeconds === undefined) {
+    if (/last\s+(?:a|one)\s+(?:second|sec)\b/.test(lower)) {
+      lastSeconds = 1;
+    } else if (/last\s+(?:half|0\.5)\s+(?:second|sec)\b/.test(lower)) {
+      lastSeconds = 0.5;
+    }
+  }
 
   // Extract patterns like "to 2 seconds", "make it 2s long"
-  const toMatch = lower.match(/\b(?:to|make it)\s+(\d+(?:\.\d+)?)\s*(?:s|sec|secs|seconds)\b/);
+  const toMatch = lower.match(
+    /\b(?:to|make it)\s+(\d+(?:\.\d+)?)\s*(?:s|sec|secs|seconds)\b/
+  );
   const toSeconds = toMatch ? parseFloat(toMatch[1]) : undefined;
 
   // Insert captions.generate if the prompt clearly asks for captions/subtitles and planner omitted it
-  const wantsCaptions = /(\bcaption\b|\bcaptions\b|\bsubtitle\b|\bsubtitles\b|\badd captions\b|\bcreate captions\b)/.test(lower);
-  if (wantsCaptions && !steps.some((s: any) => s.type === "captions.generate")) {
-    steps = [{ type: "captions.generate", language: "auto", description: "Generate captions" } as any, ...steps];
+  const wantsCaptions =
+    /(\bcaption\b|\bcaptions\b|\bsubtitle\b|\bsubtitles\b|\badd captions\b|\bcreate captions\b)/.test(
+      lower
+    );
+  if (
+    wantsCaptions &&
+    !steps.some((s: any) => s.type === "captions.generate")
+  ) {
+    steps = [
+      {
+        type: "captions.generate",
+        language: "auto",
+        description: "Generate captions",
+      } as any,
+      ...steps,
+    ];
   }
 
   // Insert deadspace.trim if user asks to remove dead space / silence at start & end
-  const wantsDeadspace = /(dead\s*space|remove\s+silence|trim\s+silence|cut\s+silence|silence\s+(at\s+)?(start|beginning)\s*(and|\&|\+)\s*(end|finish))/i.test(lower);
+  const wantsDeadspace =
+    /(dead\s*space|remove\s+silence|trim\s+silence|cut\s+silence|silence\s+(at\s+)?(start|beginning)\s*(and|&|\+)\s*(end|finish))/i.test(
+      lower
+    );
   if (wantsDeadspace && !steps.some((s: any) => s.type === "deadspace.trim")) {
     steps = [
       {
         type: "deadspace.trim",
-        target: { kind: "clipsOverlappingRange", start: 0, end: 1e9, track: "media" },
+        target: {
+          kind: "clipsOverlappingRange",
+          start: 0,
+          end: 1e9,
+          track: "media",
+        },
         description: "Trim dead space at start and end across media clips",
       } as any,
       ...steps,
     ];
   }
 
-  return steps.map((step) => {
+  const referencesEachClip =
+    /\b(each|every)\s+(clip|clips|video|videos|segment|segments)\b/.test(lower);
+
+  let normalizedSteps = steps.map((step) => {
     if (step.type === "trim") {
-      const cloned: AnyInstruction = JSON.parse(JSON.stringify(step));
+      const cloned = JSON.parse(JSON.stringify(step)) as typeof step;
 
       // If prompt suggests "last N seconds", ensure right: deltaSeconds
       if (lastSeconds !== undefined) {
-        const right = (cloned as any).sides?.right;
-        if (!cloned.sides) cloned.sides = {} as any;
+        const right = cloned.sides?.right;
+        if (!cloned.sides) cloned.sides = {};
         // Only override if planner used toSeconds incorrectly or omitted right
         if (!right || right.mode !== "deltaSeconds") {
-          cloned.sides.right = { mode: "deltaSeconds", delta: lastSeconds } as any;
+          cloned.sides.right = { mode: "deltaSeconds", delta: lastSeconds };
         }
-        // Also ensure target is the last clip on media tracks
-        if ((cloned as any).target?.kind !== "lastClip") {
-          (cloned as any).target = { kind: "lastClip", track: "media" } as any;
+        // Adjust target scope based on prompt
+        if (referencesEachClip) {
+          cloned.target = {
+            kind: "clipsOverlappingRange",
+            start: 0,
+            end: 1e9,
+            track: "media",
+          };
+        } else if (cloned.target?.kind !== "lastClip") {
+          cloned.target = { kind: "lastClip", track: "media" };
         }
       }
 
       // If prompt suggests "to N seconds", prefer toSeconds
       if (toSeconds !== undefined) {
-        if (!cloned.sides) cloned.sides = {} as any;
-        cloned.sides.right = { mode: "toSeconds", time: toSeconds } as any;
+        if (!cloned.sides) cloned.sides = {};
+        cloned.sides.right = { mode: "toSeconds", time: toSeconds };
+      }
+
+      if (referencesEachClip) {
+        cloned.target = {
+          kind: "clipsOverlappingRange",
+          start: 0,
+          end: 1e9,
+          track: "media",
+        };
       }
 
       return cloned;
     }
     return step;
   });
+
+  if (simpleRangeCutRequest && explicitRange) {
+    const { start, end } = explicitRange;
+    let cutOutFound = false;
+
+    normalizedSteps = normalizedSteps.map((step) => {
+      if (step.type !== "cut-out") return step;
+
+      cutOutFound = true;
+      const existingTarget =
+        step.target ?? ({ kind: "clipsOverlappingRange", start, end } as const);
+      const targetTrack =
+        ("track" in existingTarget && existingTarget.track) ||
+        (existingTarget.kind === "clipsOverlappingRange"
+          ? existingTarget.track
+          : undefined) ||
+        "media";
+
+      return {
+        ...step,
+        target: {
+          kind: "clipsOverlappingRange",
+          start,
+          end,
+          track: targetTrack,
+        },
+        range: {
+          mode: "globalSeconds",
+          start,
+          end,
+        },
+      } as AnyInstruction;
+    });
+
+    normalizedSteps = normalizedSteps.filter(
+      (step) => step.type !== "twelvelabs.search"
+    );
+
+    if (!cutOutFound) {
+      normalizedSteps = [
+        ...normalizedSteps,
+        {
+          type: "cut-out",
+          target: {
+            kind: "clipsOverlappingRange",
+            start,
+            end,
+            track: "media",
+          },
+          range: {
+            mode: "globalSeconds",
+            start,
+            end,
+          },
+          description: `Cut out ${formatSeconds(start)}–${formatSeconds(end)}s across media clips`,
+        } as AnyInstruction,
+      ];
+    }
+  }
+
+  const seen = new Set<string>();
+  const result: AnyInstruction[] = [];
+  if (lastSeconds !== undefined) {
+    const hasTrim = normalizedSteps.some((step) => step.type === "trim");
+    if (!hasTrim) {
+      const trimTarget: TargetSpec = referencesEachClip
+        ? { kind: "clipsOverlappingRange", start: 0, end: 1e9, track: "media" }
+        : { kind: "lastClip", track: "media" };
+      const trimInstruction: AnyInstruction = {
+        type: "trim",
+        target: trimTarget,
+        sides: { right: { mode: "deltaSeconds", delta: lastSeconds } },
+        description: referencesEachClip
+          ? `Trim ${formatSeconds(lastSeconds)}s from each clip`
+          : `Trim ${formatSeconds(lastSeconds)}s from the last clip`,
+      } as AnyInstruction;
+
+      if (mentionsCutOut) {
+        normalizedSteps.push(trimInstruction);
+      } else {
+        const cutOutIndex = normalizedSteps.findIndex(
+          (step) => step.type === "cut-out"
+        );
+        if (cutOutIndex !== -1) {
+          normalizedSteps.splice(cutOutIndex, 1, trimInstruction);
+        } else {
+          normalizedSteps.push(trimInstruction);
+        }
+      }
+    }
+  }
+
+  for (const step of normalizedSteps) {
+    const key = canonicalInstructionKey(step);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(step);
+  }
+
+  return result;
 }
 
 /**
@@ -461,20 +753,28 @@ function mockPlan(prompt: string): AnyInstruction[] {
   const lower = prompt.toLowerCase();
   const steps: AnyInstruction[] = [] as AnyInstruction[];
 
-  const rangeMatch = lower.match(/(\d+(?:\.\d+)?)\s*(?:-|–|to)\s*(\d+(?:\.\d+)?)/);
-  const hasCutOut = lower.includes("cut out");
-  const trimDeltaMatch = lower.match(/trim.*?by\s+(\d+(?:\.\d+)?)\s*(?:s|sec|seconds)?/);
-  const parsedDelta = trimDeltaMatch ? parseFloat(trimDeltaMatch[1]) : undefined;
+  const explicitRange = extractExplicitTimeRange(prompt);
+  const hasCutOut = /\bcut\s*out\b/.test(lower);
+  const trimDeltaMatch = lower.match(
+    /trim.*?by\s+(\d+(?:\.\d+)?)\s*(?:s|sec|seconds)?/
+  );
+  const parsedDelta = trimDeltaMatch
+    ? parseFloat(trimDeltaMatch[1])
+    : undefined;
+  const referencesEachClip =
+    /\b(each|every)\s+(clip|clips|video|videos|segment|segments)\b/.test(lower);
 
-  if (hasCutOut && rangeMatch) {
-    const start = parseFloat(rangeMatch[1]);
-    const end = parseFloat(rangeMatch[2]);
-    const normStart = Math.min(start, end);
-    const normEnd = Math.max(start, end);
+  if (hasCutOut && explicitRange) {
+    const { start: normStart, end: normEnd } = explicitRange;
 
     steps.push({
       type: "cut-out",
-      target: { kind: "clipsOverlappingRange", start: normStart, end: normEnd, track: "media" },
+      target: {
+        kind: "clipsOverlappingRange",
+        start: normStart,
+        end: normEnd,
+        track: "media",
+      },
       range: { mode: "globalSeconds", start: normStart, end: normEnd },
       description: `Cut out ${normStart}–${normEnd}s across media clips`,
     } as AnyInstruction);
@@ -502,6 +802,20 @@ function mockPlan(prompt: string): AnyInstruction[] {
     } as AnyInstruction);
   }
 
+  if (parsedDelta !== undefined && referencesEachClip) {
+    steps.push({
+      type: "trim",
+      target: {
+        kind: "clipsOverlappingRange",
+        start: 0,
+        end: 1e9,
+        track: "media",
+      },
+      sides: { right: { mode: "deltaSeconds", delta: parsedDelta } },
+      description: `Trim ${parsedDelta}s from each clip`,
+    } as AnyInstruction);
+  }
+
   if (steps.length === 0) {
     steps.push({
       type: "trim",
@@ -511,7 +825,16 @@ function mockPlan(prompt: string): AnyInstruction[] {
     } as AnyInstruction);
   }
 
-  return steps;
+  const seen = new Set<string>();
+  const deduped: AnyInstruction[] = [];
+  for (const step of steps) {
+    const key = canonicalInstructionKey(step);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(step);
+  }
+
+  return deduped;
 }
 
 function getOrdinalSuffix(n: number): string {
@@ -526,4 +849,54 @@ function getOrdinalSuffix(n: number): string {
     default:
       return "th";
   }
+}
+
+function extractExplicitTimeRange(
+  text: string
+): { start: number; end: number } | null {
+  const rangeRegex =
+    /(\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?|\d+(?:\.\d+)?)(?:\s*(?:s|sec|secs|seconds))?\s*(?:-|–|to)\s*(\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?|\d+(?:\.\d+)?)(?:\s*(?:s|sec|secs|seconds))?/i;
+
+  const match = text.match(rangeRegex);
+  if (!match) return null;
+
+  const start = parseTimeToken(match[1]);
+  const end = parseTimeToken(match[2]);
+  if (start == null || end == null) return null;
+
+  const normStart = Math.max(0, Math.min(start, end));
+  const normEnd = Math.max(0, Math.max(start, end));
+  if (normEnd <= normStart) return null;
+
+  return { start: normStart, end: normEnd };
+}
+
+function parseTimeToken(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (/^\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?$/.test(trimmed)) {
+    const segments = trimmed.split(":");
+    let multiplier = 1;
+    let total = 0;
+    for (let i = segments.length - 1; i >= 0; i -= 1) {
+      const value = parseFloat(segments[i]);
+      if (Number.isNaN(value)) {
+        return null;
+      }
+      total += value * multiplier;
+      multiplier *= 60;
+    }
+    return total;
+  }
+
+  if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
+    const value = parseFloat(trimmed);
+    return Number.isNaN(value) ? null : value;
+  }
+
+  return null;
+}
+
+function formatSeconds(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return Number.isInteger(value) ? `${value}` : value.toFixed(2);
 }

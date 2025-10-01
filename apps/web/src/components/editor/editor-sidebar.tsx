@@ -64,7 +64,9 @@ export function EditorSidebar() {
               onClick={() => handleItemClick(tab)}
               className={cn(
                 "flex w-full flex-col items-center gap-1 text-xs font-medium transition",
-                isActive ? "text-white" : "text-muted-foreground hover:text-white"
+                isActive
+                  ? "text-white"
+                  : "text-muted-foreground hover:text-white"
               )}
             >
               <span

@@ -6,21 +6,30 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { Loader2, CheckCircle2, AlertTriangle, Sparkles, ArrowUpRight } from "lucide-react";
+import {
+  Loader2,
+  CheckCircle2,
+  AlertTriangle,
+  Sparkles,
+  ArrowUpRight,
+} from "lucide-react";
 
 import { useAgentOrchestrator } from "@/hooks/use-agent-orchestrator";
-import {
-  useAgentUIStore,
-  type AgentRunStatus,
-} from "@/stores/agent-ui-store";
+import { useAgentUIStore, type AgentRunStatus } from "@/stores/agent-ui-store";
 
 const quickSuggestions: { label: string; prompt: string }[] = [
   { label: "Auto-Cut Silence", prompt: "auto-cut silence across the timeline" },
-  { label: "Highlight Reel", prompt: "create a highlight reel of the best moments" },
+  {
+    label: "Highlight Reel",
+    prompt: "create a highlight reel of the best moments",
+  },
   { label: "Add Subtitles", prompt: "generate subtitles for the video" },
   { label: "Color Grade", prompt: "apply cinematic color grading" },
   { label: "Sync to Music", prompt: "sync cuts to the beat of the music" },
-  { label: "Cinematic Look", prompt: "apply cinematic look and stabilize footage" },
+  {
+    label: "Cinematic Look",
+    prompt: "apply cinematic look and stabilize footage",
+  },
   { label: "Vertical Crop", prompt: "vertical crop for 9:16 short" },
 ];
 
@@ -52,9 +61,10 @@ export function AgentPanel() {
     };
   }, []);
 
-  const appendLog = (
-    entry: { type: "log" | "step" | "done" | "error"; message: string },
-  ) => {
+  const appendLog = (entry: {
+    type: "log" | "step" | "done" | "error";
+    message: string;
+  }) => {
     setLogs((prev) => [
       ...prev,
       { id: `${Date.now()}-${prev.length}`, ...entry },
@@ -145,7 +155,7 @@ export function AgentPanel() {
         <span
           className={cn(
             "inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium",
-            statusMeta.pillClass,
+            statusMeta.pillClass
           )}
         >
           {statusMeta.icon}
@@ -188,9 +198,15 @@ export function AgentPanel() {
               )}
             </div>
             <div className="flex items-center gap-2">
-              {status === "running" && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
-              {status === "completed" && <CheckCircle2 className="h-4 w-4 text-emerald-400" />}
-              {status === "error" && <AlertTriangle className="h-4 w-4 text-red-400" />}
+              {status === "running" && (
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              )}
+              {status === "completed" && (
+                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+              )}
+              {status === "error" && (
+                <AlertTriangle className="h-4 w-4 text-red-400" />
+              )}
             </div>
           </div>
         </div>
@@ -209,7 +225,8 @@ export function AgentPanel() {
                 className={cn(
                   "rounded-lg border border-border/30 bg-surface-elevated px-3 py-2 text-xs font-medium",
                   entry.type === "error" && "border-red-500/40 text-red-300",
-                  entry.type === "done" && "border-emerald-500/40 text-emerald-300",
+                  entry.type === "done" &&
+                    "border-emerald-500/40 text-emerald-300"
                 )}
               >
                 <span className="uppercase tracking-wide text-[0.65rem] opacity-70">

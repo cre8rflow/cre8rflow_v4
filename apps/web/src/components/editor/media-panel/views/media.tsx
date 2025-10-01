@@ -226,8 +226,8 @@ export function MediaView() {
               aria-live="polite"
               title="Indexing queued"
             >
-              <div className="rounded-full bg-muted/80 text-foreground/80 backdrop-blur-xs border border-border/60 shadow-xs h-7 px-2 inline-flex items-center gap-1">
-                <Clock3 className="h-3.5 w-3.5" aria-hidden="true" />
+              <div className="rounded-full bg-background/90 backdrop-blur-xs border border-border/60 shadow-sm h-7 w-7 inline-flex items-center justify-center">
+                <Loader2 className="h-3.5 w-3.5 text-primary animate-spin" aria-hidden="true" />
               </div>
             </div>
           );

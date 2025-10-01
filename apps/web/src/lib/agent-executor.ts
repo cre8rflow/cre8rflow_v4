@@ -18,6 +18,14 @@ import { encryptWithRandomKey, arrayBufferToBase64 } from "@/lib/zk-encryption";
 import { extractTimelineAudio } from "@/lib/mediabunny-utils";
 import { DEFAULT_TEXT_ELEMENT } from "@/constants/text-constants";
 import { extractElementAudio } from "@/lib/mediabunny-utils";
+import {
+  emitCaptionHighlights,
+  emitTrimHighlights,
+  emitCutHighlights,
+} from "@/lib/timeline-highlights";
+import { useAgentUIStore } from "@/stores/agent-ui-store";
+import { useTimelineCommandStore } from "@/stores/timeline-command-store";
+import type { CommandEffect } from "@/stores/timeline-command-store";
 
 // =============================================================================
 // RESULT TYPES
@@ -41,14 +49,39 @@ export type ExecutionOutcome = ExecutionResult | ExecutionError;
 // MAIN EXECUTOR FUNCTION
 // =============================================================================
 
+interface InstructionContext {
+  commandId?: string;
+  totalSteps?: number;
+  stepIndex?: number;
+}
+
+const instructionTypeToEffect = (
+  instruction: AnyInstruction
+): CommandEffect => {
+  switch (instruction.type) {
+    case "trim":
+      return "trim";
+    case "cut-out":
+      return "cut";
+    case "captions.generate":
+      return "caption";
+    case "deadspace.trim":
+      return "deadspace";
+    default:
+      return "generic";
+  }
+};
+
 /**
  * Execute any instruction (agent or server-side)
  * This is the main entry point for instruction execution
  */
 export function executeInstruction({
   instruction,
+  context,
 }: {
   instruction: AnyInstruction;
+  context?: InstructionContext;
 }): ExecutionOutcome {
   // New: handle captions generation (async) before other branches
   if (instruction.type === "captions.generate") {
@@ -71,7 +104,7 @@ export function executeInstruction({
 
   // Handle client-side agent instructions
   if (isAgentInstruction(instruction)) {
-    return executeAgentInstruction({ instruction });
+    return executeAgentInstruction({ instruction, context });
   }
 
   // Exhaustive check - this should never happen with proper typing
@@ -105,8 +138,10 @@ function executeServerInstruction({
  */
 function executeAgentInstruction({
   instruction,
+  context,
 }: {
   instruction: AgentInstruction;
+  context?: InstructionContext;
 }): ExecutionOutcome {
   // Resolve abstract target specification to concrete elements
   const targets = resolveTargets(instruction.target);
@@ -137,6 +172,75 @@ function executeAgentInstruction({
       targetSpec: describeTargetSpec(instruction.target),
       resolvedTargets: targetDescriptions,
     });
+  }
+
+  if (targets.length) {
+    const agentUI = useAgentUIStore.getState();
+    const ordinalLabels = targets.map((_, idx) => formatOrdinalClip(idx + 1));
+    const clipSummary = ordinalLabels.join(", ");
+    agentUI.updateMessage(
+      instruction.description
+        ? `${instruction.description} – ${clipSummary}`
+        : `${instruction.type === "trim" ? "Trimming" : "Processing"} ${clipSummary}`
+    );
+  }
+
+  if (context?.commandId) {
+    const commandStore = useTimelineCommandStore.getState();
+    commandStore.registerTargets({
+      id: context.commandId,
+      type: instructionTypeToEffect(instruction),
+      description: instruction.description,
+      targets,
+    });
+  }
+
+  if (targets.length > 0) {
+    if (instruction.type === "trim") {
+      const includeAttachments =
+        targets.length > 1 ||
+        instruction.target.kind === "clipsOverlappingRange";
+      emitTrimHighlights({
+        targets,
+        includeAttachments,
+        ttl: 3200,
+        meta: {
+          source: "trim",
+          phase: "preview",
+          description: instruction.description,
+        },
+        delayBetween: 260,
+      });
+    } else if (instruction.type === "cut-out") {
+      const includeAttachments =
+        targets.length > 1 ||
+        instruction.target.kind === "clipsOverlappingRange";
+
+      const timelineRange =
+        instruction.range.mode === "globalSeconds"
+          ? {
+              mode: "timeline" as const,
+              start: instruction.range.start,
+              end: instruction.range.end,
+            }
+          : null;
+
+      emitCutHighlights({
+        items: targets.map((target) => ({
+          target,
+          includeAttachments,
+          range: timelineRange ?? undefined,
+        })),
+        includeAttachments,
+        ttl: 3400,
+        meta: {
+          source: "cut-out",
+          phase: "preview",
+          description: instruction.description,
+        },
+        delayBetween: 300,
+      });
+    }
   }
 
   // Push one history entry for the entire batch operation
@@ -202,6 +306,7 @@ function executeTrimInstruction({
         sides: instruction.sides,
         options: {
           ...instruction.options,
+          ripple: instruction.options?.ripple ?? true,
           // Ensure we don't push history for individual operations
           pushHistory: false,
           // Always disable individual command toasts - we handle toasts at instruction level
@@ -288,12 +393,15 @@ function executeCaptionsGenerateInstruction({
         body: JSON.stringify({ fileExtension: "wav" }),
       });
       if (!presign.ok) {
-        const e = await presign.json().catch(() => ({} as any));
+        const e = await presign.json().catch(() => ({}) as any);
         throw new Error(e.message || "Failed to get upload URL");
       }
       const { uploadUrl, fileName } = await presign.json();
 
-      const put = await fetch(uploadUrl, { method: "PUT", body: encryptedBlob });
+      const put = await fetch(uploadUrl, {
+        method: "PUT",
+        body: encryptedBlob,
+      });
       if (!put.ok) {
         throw new Error(`Upload failed: ${put.status}`);
       }
@@ -310,13 +418,17 @@ function executeCaptionsGenerateInstruction({
         }),
       });
       if (!transcribe.ok) {
-        const e = await transcribe.json().catch(() => ({} as any));
+        const e = await transcribe.json().catch(() => ({}) as any);
         throw new Error(e.message || "Transcription failed");
       }
       const { segments } = await transcribe.json();
 
       // 5) Convert segments into short caption chunks
-      const shortCaptions: Array<{ text: string; startTime: number; duration: number }> = [];
+      const shortCaptions: Array<{
+        text: string;
+        startTime: number;
+        duration: number;
+      }> = [];
       let globalEndTime = 0;
       for (const seg of segments || []) {
         const text = String(seg.text || "").trim();
@@ -327,10 +439,17 @@ function executeCaptionsGenerateInstruction({
         let chunkStart = seg.start ?? 0;
         for (let i = 0; i < words.length; i += 3) {
           const chunkText = words.slice(i, i + 3).join(" ");
-          const chunkDuration = Math.max(0.8, Math.ceil((3 / Math.max(wps, 0.001)) * 10) / 10);
+          const chunkDuration = Math.max(
+            0.8,
+            Math.ceil((3 / Math.max(wps, 0.001)) * 10) / 10
+          );
           let start = chunkStart;
           if (start < globalEndTime) start = globalEndTime;
-          shortCaptions.push({ text: chunkText, startTime: start, duration: chunkDuration });
+          shortCaptions.push({
+            text: chunkText,
+            startTime: start,
+            duration: chunkDuration,
+          });
           globalEndTime = start + chunkDuration;
           chunkStart += chunkDuration;
         }
@@ -338,6 +457,12 @@ function executeCaptionsGenerateInstruction({
 
       const timeline = useTimelineStore.getState();
       const trackId = timeline.insertTrackAt("text", 0);
+      const baselineState = useTimelineStore.getState();
+      const baselineTrack = baselineState.tracks.find((t) => t.id === trackId);
+      const baselineIds = new Set(
+        (baselineTrack?.elements ?? []).map((element) => element.id)
+      );
+
       timeline.pushHistory();
       shortCaptions.forEach((cap, idx) => {
         timeline.addElementToTrack(trackId, {
@@ -351,6 +476,19 @@ function executeCaptionsGenerateInstruction({
         } as any);
       });
 
+      const updatedState = useTimelineStore.getState();
+      const captionTrack = updatedState.tracks.find((t) => t.id === trackId);
+      const highlightTargets = (captionTrack?.elements ?? [])
+        .filter((element) => !baselineIds.has(element.id))
+        .map((element) => ({ trackId, elementId: element.id }));
+
+      if (highlightTargets.length > 0) {
+        emitCaptionHighlights({
+          targets: highlightTargets,
+          meta: { source: "captions.generate" },
+        });
+      }
+
       toast.success(`Added ${shortCaptions.length} captions`);
     } catch (e: any) {
       console.error("Agent captions failed:", e);
@@ -359,7 +497,11 @@ function executeCaptionsGenerateInstruction({
   })();
 
   // Immediate response; actual work continues asynchronously
-  return { success: true, targetsResolved: 0, message: description || "Captions started" };
+  return {
+    success: true,
+    targetsResolved: 0,
+    message: description || "Captions started",
+  };
 }
 
 // =============================================================================
@@ -369,7 +511,12 @@ function executeCaptionsGenerateInstruction({
 function executeDeadspaceTrimInstruction({
   instruction,
 }: {
-  instruction: { type: "deadspace.trim"; target: any; language?: string; description?: string };
+  instruction: {
+    type: "deadspace.trim";
+    target: any;
+    language?: string;
+    description?: string;
+  };
 }): ExecutionOutcome {
   (async () => {
     const lang = (instruction.language || "auto").toLowerCase();
@@ -377,7 +524,9 @@ function executeDeadspaceTrimInstruction({
     try {
       const targets = resolveTargets(instruction.target);
       if (targets.length === 0) {
-        toast.error(`No targets found for: ${describeTargetSpec(instruction.target)}`);
+        toast.error(
+          `No targets found for: ${describeTargetSpec(instruction.target)}`
+        );
         return;
       }
 
@@ -392,20 +541,30 @@ function executeDeadspaceTrimInstruction({
         try {
           const fresh = useTimelineStore.getState();
           const track = fresh.tracks.find((t) => t.id === target.trackId);
-          const element = track?.elements.find((e) => e.id === target.elementId);
+          const element = track?.elements.find(
+            (e) => e.id === target.elementId
+          );
           if (!track || !element || element.type !== "media") {
             skippedCount++;
             continue;
           }
 
           const mediaStore = useMediaStore.getState();
-          const mediaFile = mediaStore.mediaFiles.find((m) => m.id === element.mediaId);
-          if (!mediaFile || !(mediaFile.type === "audio" || mediaFile.type === "video")) {
+          const mediaFile = mediaStore.mediaFiles.find(
+            (m) => m.id === element.mediaId
+          );
+          if (
+            !mediaFile ||
+            !(mediaFile.type === "audio" || mediaFile.type === "video")
+          ) {
             skippedCount++;
             continue;
           }
 
-          const effectiveDuration = Math.max(0, element.duration - element.trimStart - element.trimEnd);
+          const effectiveDuration = Math.max(
+            0,
+            element.duration - element.trimStart - element.trimEnd
+          );
           if (effectiveDuration <= 0.25) {
             // too short to process
             skippedCount++;
@@ -421,9 +580,12 @@ function executeDeadspaceTrimInstruction({
 
           // 2) Local VAD to find speech window (10 ms precision)
           const arrayBuf = await audioBlob.arrayBuffer();
-          const AC: any = (window as any).AudioContext || (window as any).webkitAudioContext;
+          const AC: any =
+            (window as any).AudioContext || (window as any).webkitAudioContext;
           const audioCtx = new AC();
-          const audioBuffer: AudioBuffer = await audioCtx.decodeAudioData(arrayBuf.slice(0));
+          const audioBuffer: AudioBuffer = await audioCtx.decodeAudioData(
+            arrayBuf.slice(0)
+          );
           const vad = detectSpeechWindow(audioBuffer);
 
           let earliestStart: number | null = null;
@@ -435,7 +597,8 @@ function executeDeadspaceTrimInstruction({
           } else {
             // Optional hybrid fallback: escalate to transcription only when VAD is uncertain
             try {
-              const { encryptedData, key, iv } = await encryptWithRandomKey(arrayBuf);
+              const { encryptedData, key, iv } =
+                await encryptWithRandomKey(arrayBuf);
               const encryptedBlob = new Blob([encryptedData]);
 
               const presign = await fetch("/api/get-upload-url", {
@@ -444,11 +607,14 @@ function executeDeadspaceTrimInstruction({
                 body: JSON.stringify({ fileExtension: "wav" }),
               });
               if (!presign.ok) {
-                const e = await presign.json().catch(() => ({} as any));
+                const e = await presign.json().catch(() => ({}) as any);
                 throw new Error(e.message || "Failed to get upload URL");
               }
               const { uploadUrl, fileName } = await presign.json();
-              const put = await fetch(uploadUrl, { method: "PUT", body: encryptedBlob });
+              const put = await fetch(uploadUrl, {
+                method: "PUT",
+                body: encryptedBlob,
+              });
               if (!put.ok) throw new Error(`Upload failed: ${put.status}`);
 
               const transcribe = await fetch("/api/transcribe", {
@@ -462,19 +628,24 @@ function executeDeadspaceTrimInstruction({
                 }),
               });
               if (!transcribe.ok) {
-                const e = await transcribe.json().catch(() => ({} as any));
+                const e = await transcribe.json().catch(() => ({}) as any);
                 throw new Error(e.message || "Transcription failed");
               }
               const { segments } = await transcribe.json();
               const filtered = Array.isArray(segments)
                 ? segments.filter((s: any) => {
                     const d = (s.end ?? 0) - (s.start ?? 0);
-                    const noSpeech = typeof s.no_speech_prob === "number" ? s.no_speech_prob : 0;
+                    const noSpeech =
+                      typeof s.no_speech_prob === "number"
+                        ? s.no_speech_prob
+                        : 0;
                     return d >= 0.2 && noSpeech < 0.8;
                   })
                 : [];
               if (filtered.length) {
-                earliestStart = Math.min(...filtered.map((s: any) => s.start ?? 0));
+                earliestStart = Math.min(
+                  ...filtered.map((s: any) => s.start ?? 0)
+                );
                 latestEnd = Math.max(...filtered.map((s: any) => s.end ?? 0));
               }
             } catch (e) {
@@ -509,25 +680,35 @@ function executeDeadspaceTrimInstruction({
                 left: { mode: "toSeconds", time: leftTime },
                 right: { mode: "toSeconds", time: rightTime },
               },
-              options: { pushHistory: false, showToast: false, clamp: true, precision: 3 },
+              options: {
+                pushHistory: false,
+                showToast: false,
+                clamp: true,
+                precision: 3,
+              },
             },
           });
 
           if (result.success) successCount++;
-          else errors.push(result.error || `Trim failed on ${target.elementId}`);
+          else
+            errors.push(result.error || `Trim failed on ${target.elementId}`);
         } catch (err: any) {
           errors.push(err?.message || String(err));
         }
       }
 
       if (successCount > 0 && errors.length === 0) {
-        toast.success(`Trimmed dead space on ${successCount} clip${successCount > 1 ? "s" : ""}`);
+        toast.success(
+          `Trimmed dead space on ${successCount} clip${successCount > 1 ? "s" : ""}`
+        );
       } else if (successCount > 0) {
         toast.warning(
           `Trimmed dead space on ${successCount}, ${skippedCount} skipped, ${errors.length} errors`
         );
       } else {
-        toast.error(`No clips trimmed. ${skippedCount} skipped${errors.length ? ", errors occurred" : ""}`);
+        toast.error(
+          `No clips trimmed. ${skippedCount} skipped${errors.length ? ", errors occurred" : ""}`
+        );
       }
     } catch (e: any) {
       console.error("Deadspace trim failed:", e);
@@ -535,15 +716,21 @@ function executeDeadspaceTrimInstruction({
     }
   })();
 
-  return { success: true, targetsResolved: 0, message: instruction.description || "Trimming dead space…" };
+  return {
+    success: true,
+    targetsResolved: 0,
+    message: instruction.description || "Trimming dead space…",
+  };
 }
 
 // -----------------------------------------------------------------------------
 // Local VAD (energy-based, 10 ms frames, hysteresis)
 // -----------------------------------------------------------------------------
-function detectSpeechWindow(buffer: AudioBuffer): { start: number; end: number; confidence: number } | null {
+function detectSpeechWindow(
+  buffer: AudioBuffer
+): { start: number; end: number; confidence: number } | null {
   const channel = buffer.getChannelData(0);
-  const sr = buffer.sampleRate || 16000;
+  const sr = buffer.sampleRate || 16_000;
   const frameMs = 10; // 10 ms resolution
   const frameLen = Math.max(1, Math.round((sr * frameMs) / 1000));
   const totalFrames = Math.floor(channel.length / frameLen);
@@ -590,7 +777,7 @@ function detectSpeechWindow(buffer: AudioBuffer): { start: number; end: number; 
   let endFrame: number | null = null;
   run = 0;
   for (let f = active.length - 1; f >= 0; f--) {
-    run = !active[f] ? run + 1 : 0;
+    run = active[f] ? 0 : run + 1;
     if (run >= minInactiveFrames) {
       endFrame = f + minInactiveFrames - 1;
       break;
@@ -612,7 +799,8 @@ function detectSpeechWindow(buffer: AudioBuffer): { start: number; end: number; 
 
 /**
  * Execute a server-provided TwelveLabs applyCut instruction on matching elements.
- * Maps source timestamps to element-relative seconds by subtracting trimStart.
+ * TwelveLabs provides timestamps in source video coordinates.
+ * We need to find elements whose visible source range overlaps with the TwelveLabs range.
  */
 function executeTwelveLabsApplyCut(instruction: {
   type: "twelvelabs.applyCut";
@@ -637,12 +825,26 @@ function executeTwelveLabsApplyCut(instruction: {
     };
   }
 
-  // Collect all matching elements across tracks
-  const targets: { trackId: string; elementId: string; trimStart: number }[] = [];
+  // Collect matching elements with full data for range validation
+  interface TargetElement {
+    trackId: string;
+    elementId: string;
+    trimStart: number;
+    trimEnd: number;
+    duration: number;
+  }
+
+  const targets: TargetElement[] = [];
   for (const track of timeline.tracks) {
     for (const el of track.elements) {
       if (el.type === "media" && matchingMediaIds.includes(el.mediaId)) {
-        targets.push({ trackId: track.id, elementId: el.id, trimStart: el.trimStart });
+        targets.push({
+          trackId: track.id,
+          elementId: el.id,
+          trimStart: el.trimStart,
+          trimEnd: el.trimEnd,
+          duration: el.duration,
+        });
       }
     }
   }
@@ -655,6 +857,33 @@ function executeTwelveLabsApplyCut(instruction: {
     };
   }
 
+  // Filter targets to only those whose visible source range overlaps with TwelveLabs range
+  const validTargets = targets.filter((target) => {
+    // Calculate visible source video range for this element
+    const sourceStart = target.trimStart;
+    const sourceEnd = target.duration - target.trimEnd;
+
+    // Check if TwelveLabs range overlaps with element's visible source range
+    // Ranges overlap if: !(rangeEnd <= elementStart || rangeStart >= elementEnd)
+    const overlaps = !(
+      instruction.end <= sourceStart || instruction.start >= sourceEnd
+    );
+
+    return overlaps;
+  });
+
+  if (validTargets.length === 0) {
+    const targetInfo =
+      targets.length === 1
+        ? `element (shows source ${targets[0].trimStart.toFixed(2)}-${(targets[0].duration - targets[0].trimEnd).toFixed(2)}s)`
+        : `${targets.length} elements`;
+    return {
+      success: false,
+      error: `TwelveLabs range ${instruction.start.toFixed(2)}-${instruction.end.toFixed(2)}s doesn't overlap with ${targetInfo}`,
+      targetsResolved: 0,
+    };
+  }
+
   // Single history entry for whole operation
   timeline.pushHistory();
 
@@ -662,24 +891,43 @@ function executeTwelveLabsApplyCut(instruction: {
   const errors: string[] = [];
   let totalRemovedDuration = 0;
 
-  for (const target of targets) {
-    // Adjust to element-local seconds by subtracting current trimStart
+  for (const target of validTargets) {
+    // Convert TwelveLabs source video timestamps to element-relative coordinates
+    // TwelveLabs range is in source video time, element coordinates start at 0
+    // If element shows source 5-20s and TwelveLabs says "cut 10-15s",
+    // element-relative coordinates are: (10-5) to (15-5) = 5s to 10s
     const localStart = instruction.start - target.trimStart;
     const localEnd = instruction.end - target.trimStart;
+
+    // Calculate element's visible duration for bounds validation
+    const visibleDuration = target.duration - target.trimStart - target.trimEnd;
+
+    // Clamp to element bounds (with tolerance for edge cases)
+    const clampedStart = Math.max(0, localStart);
+    const clampedEnd = Math.min(visibleDuration, localEnd);
+
+    // Validate that we have a meaningful range to cut
+    if (clampedEnd <= clampedStart || clampedEnd - clampedStart < 0.01) {
+      errors.push(
+        `Range too small or invalid for ${target.elementId} (${clampedStart.toFixed(2)}-${clampedEnd.toFixed(2)}s)`
+      );
+      continue;
+    }
 
     const result = cutOut({
       plan: {
         type: "cut-out",
         scope: "element",
         element: { trackId: target.trackId, elementId: target.elementId },
-        range: { mode: "elementSeconds", start: localStart, end: localEnd },
-        options: { pushHistory: false, showToast: false },
+        range: { mode: "elementSeconds", start: clampedStart, end: clampedEnd },
+        options: { pushHistory: false, showToast: false, clamp: true },
       },
     });
 
     if (result.success) {
       successCount++;
-      if (result.removedDuration) totalRemovedDuration += result.removedDuration;
+      if (result.removedDuration)
+        totalRemovedDuration += result.removedDuration;
     } else {
       errors.push(result.error || `Unknown error on ${target.elementId}`);
     }
@@ -688,15 +936,19 @@ function executeTwelveLabsApplyCut(instruction: {
   if (successCount > 0) {
     const msg =
       instruction.description ||
-      `Cut out matched content (${totalRemovedDuration.toFixed(2)}s removed)`;
+      `Cut out matched content (${totalRemovedDuration.toFixed(2)}s removed from ${successCount} clip${successCount > 1 ? "s" : ""})`;
     toast.success(msg);
-    return { success: true, targetsResolved: targets.length, message: msg };
+    return {
+      success: true,
+      targetsResolved: validTargets.length,
+      message: msg,
+    };
   }
 
   return {
     success: false,
     error: `Failed to apply cut: ${errors.join(", ")}`,
-    targetsResolved: targets.length,
+    targetsResolved: validTargets.length,
   };
 }
 
@@ -1014,4 +1266,21 @@ export function validateInstructionForExecution({
     valid: issues.length === 0,
     issues,
   };
+}
+function getOrdinalSuffix(n: number) {
+  if (n >= 11 && n <= 13) return "th";
+  switch (n % 10) {
+    case 1:
+      return "st";
+    case 2:
+      return "nd";
+    case 3:
+      return "rd";
+    default:
+      return "th";
+  }
+}
+
+function formatOrdinalClip(index: number) {
+  return `${index}${getOrdinalSuffix(index)} clip`;
 }

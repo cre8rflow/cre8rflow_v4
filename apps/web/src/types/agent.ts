@@ -69,7 +69,7 @@ export interface TLApplyCutInstruction {
   type: "twelvelabs.applyCut";
   videoId: string;
   start: number; // source video start in seconds
-  end: number;   // source video end in seconds
+  end: number; // source video end in seconds
   description?: string;
 }
 
@@ -154,7 +154,11 @@ export const TargetSpecSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("nthClip"),
-    index: z.number().int().positive("Index must be a positive integer"),
+    index: z
+      .number()
+      .int()
+      .min(0, "Index must be non-negative")
+      .transform((idx) => (idx === 0 ? 1 : idx)), // Auto-correct 0-based to 1-based
     track: TrackFilterSchema.optional(),
   }),
   z.object({
@@ -165,25 +169,28 @@ export const TargetSpecSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+// TrimSide schema with discriminated union to enforce required fields per mode
+const TrimSideSchema = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.literal("toSeconds"),
+    time: z.number().min(0, "Time must be non-negative"),
+  }),
+  z.object({
+    mode: z.literal("toPlayhead"),
+  }),
+  z.object({
+    mode: z.literal("deltaSeconds"),
+    delta: z.number().min(0, "Delta must be non-negative"),
+  }),
+]);
+
 // Instruction schemas
 export const TrimInstructionSchema = z.object({
   type: z.literal("trim"),
   target: TargetSpecSchema,
   sides: z.object({
-    left: z
-      .object({
-        mode: z.enum(["toSeconds", "toPlayhead", "deltaSeconds"]),
-        time: z.number().optional(),
-        delta: z.number().optional(),
-      })
-      .optional(),
-    right: z
-      .object({
-        mode: z.enum(["toSeconds", "toPlayhead", "deltaSeconds"]),
-        time: z.number().optional(),
-        delta: z.number().optional(),
-      })
-      .optional(),
+    left: TrimSideSchema.optional(),
+    right: TrimSideSchema.optional(),
   }),
   options: z
     .object({

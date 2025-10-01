@@ -76,15 +76,11 @@ export function PreviewPanel() {
 
   const canvasSize = activeProject?.canvasSize || DEFAULT_CANVAS_SIZE;
   const projectFps = activeProject?.fps || DEFAULT_FPS;
-  const {
-    getCachedFrame,
-    cacheFrame,
-    invalidateCache,
-    preRenderNearbyFrames,
-  } = useFrameCache({
-    maxCacheSize: 90,
-    cacheResolution: Math.min(projectFps, 30),
-  });
+  const { getCachedFrame, cacheFrame, invalidateCache, preRenderNearbyFrames } =
+    useFrameCache({
+      maxCacheSize: 90,
+      cacheResolution: Math.min(projectFps, 30),
+    });
   const [dragState, setDragState] = useState<TextElementDragState>({
     isDragging: false,
     elementId: null,
@@ -763,10 +759,7 @@ export function PreviewPanel() {
   return (
     <>
       <div className="flex h-full flex-col rounded-3xl border border-border/40 bg-surface-elevated/95 shadow-soft overflow-hidden">
-        <div
-          ref={containerRef}
-          className="flex flex-1 min-h-0 flex-col"
-        >
+        <div ref={containerRef} className="flex flex-1 min-h-0 flex-col">
           <div className="flex flex-1 items-center justify-center">
             {shouldRenderPreview ? (
               <div
@@ -795,7 +788,9 @@ export function PreviewPanel() {
                 />
                 {activeElements.length === 0
                   ? null
-                  : activeElements.map((elementData) => renderElement(elementData))}
+                  : activeElements.map((elementData) =>
+                      renderElement(elementData)
+                    )}
                 <LayoutGuideOverlay />
                 <CommandStatusOverlay
                   status={agentStatus}
@@ -896,7 +891,9 @@ function CommandStatusOverlay({
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             {meta.label}
           </p>
-          {prompt ? <p className="text-sm font-semibold text-foreground">{prompt}</p> : null}
+          {prompt ? (
+            <p className="text-sm font-semibold text-foreground">{prompt}</p>
+          ) : null}
         </div>
       </div>
       {message ? (
