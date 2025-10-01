@@ -758,7 +758,7 @@ export function PreviewPanel() {
 
   return (
     <>
-      <div className="flex h-full flex-col rounded-3xl border border-border/40 bg-surface-elevated/95 shadow-soft overflow-hidden">
+      <div className="flex h-full flex-col bg-gradient-to-b from-surface-elevated/95 via-primary/5 to-primary/10 shadow-soft overflow-hidden">
         <div ref={containerRef} className="flex flex-1 min-h-0 flex-col">
           <div className="flex flex-1 items-center justify-center">
             {shouldRenderPreview ? (
@@ -1187,13 +1187,13 @@ function PreviewToolbar({
   }
 
   return (
-    <div
-      data-toolbar
-      className="flex items-center justify-between rounded-2xl border border-border/40 bg-surface-base/70 px-4 py-3"
-    >
+      <div
+        data-toolbar
+        className="flex items-center justify-between border border-border/40 bg-surface-base/70 px-4 py-3"
+      >
       <div className="flex items-center gap-3">
-        <Button
-          variant="ghost"
+            <Button
+              variant="text"
           size="icon"
           onClick={toggle}
           disabled={!hasAnyElements}
@@ -1215,7 +1215,7 @@ function PreviewToolbar({
         <Popover>
           <PopoverTrigger asChild>
             <Button
-              variant="ghost"
+              variant="text"
               size="icon"
               className="h-9 w-9 rounded-xl border border-border/30 bg-surface-base/60 text-foreground transition hover:bg-surface-elevated"
               title="Toggle layout guide"
@@ -1261,7 +1261,7 @@ function PreviewToolbar({
           </PopoverContent>
         </Popover>
         <Button
-          variant="ghost"
+          variant="text"
           size="icon"
           className="h-9 w-9 rounded-xl border border-border/30 bg-surface-base/60 text-foreground transition hover:bg-surface-elevated"
           onClick={onToggleExpanded}

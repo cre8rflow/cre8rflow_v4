@@ -280,7 +280,7 @@ export function TimelineElement({
             className={cn(
               "relative h-full cursor-pointer overflow-hidden transition-all",
               element.type === "text"
-                ? "rounded-none bg-emerald-600"
+                ? "rounded-none bg-gradient-to-r from-green-700 to-green-500"
                 : "rounded-none bg-surface-elevated/90",
               element.type === "text" ? undefined : getTrackElementClasses(track.type),
               isBeingDragged

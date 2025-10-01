@@ -619,7 +619,7 @@ export function Timeline() {
   }, []);
 
   return (
-    <div className="flex h-full flex-col gap-3 rounded-3xl border border-border/40 bg-surface-elevated/95 p-4 shadow-soft">
+    <div className="flex h-full flex-col gap-3 rounded-3xl border border-border/40 bg-gradient-to-b from-surface-elevated/95 via-primary/5 to-primary/10 p-4 shadow-soft">
       <TimelineToolbar zoomLevel={zoomLevel} setZoomLevel={setZoomLevel} />
 
       <div
@@ -880,7 +880,7 @@ export function Timeline() {
                         <ContextMenu key={track.id}>
                           <ContextMenuTrigger asChild>
                             <div
-                              className="absolute left-0 right-0 px-3"
+                              className="absolute left-0 right-0 px-0"
                               style={{
                                 top: `${getCumulativeHeightBefore(
                                   tracks,

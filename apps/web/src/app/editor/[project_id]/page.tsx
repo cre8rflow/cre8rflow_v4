@@ -36,9 +36,9 @@ export default function Editor() {
   } = usePanelStore();
 
   const renderPreviewWorkspace = () => (
-    <div className="flex h-full min-h-0 w-full bg-surface-base/80 p-3">
+    <div className="flex h-full min-h-0 w-full bg-surface-base/80">
       {isAgentPanelOpen ? (
-        <div className="flex-1 rounded-2xl bg-surface-elevated/95 shadow-soft">
+        <div className="flex-1 bg-surface-elevated/95 shadow-soft">
           <ResizablePanelGroup direction="horizontal" className="flex h-full">
             <ResizablePanel
               defaultSize={100 - propertiesPanel}
@@ -46,7 +46,7 @@ export default function Editor() {
               onResize={(size) => setPropertiesPanel(100 - size)}
               className="min-w-0"
             >
-              <div className="h-full w-full overflow-hidden rounded-l-2xl">
+              <div className="h-full w-full overflow-hidden">
                 <PreviewPanel />
               </div>
             </ResizablePanel>
@@ -58,14 +58,14 @@ export default function Editor() {
               onResize={setPropertiesPanel}
               className="min-w-0"
             >
-              <div className="h-full w-full overflow-hidden rounded-r-2xl bg-surface-elevated/95">
+              <div className="h-full w-full overflow-hidden bg-surface-elevated/95">
                 <AgentPanel />
               </div>
             </ResizablePanel>
           </ResizablePanelGroup>
         </div>
       ) : (
-        <div className="flex-1 rounded-2xl bg-surface-elevated/95 shadow-soft overflow-hidden">
+        <div className="flex-1 bg-surface-elevated/95 shadow-soft overflow-hidden">
           <PreviewPanel />
         </div>
       )}
@@ -206,12 +206,12 @@ export default function Editor() {
                 onResize={setMainContent}
                 className="min-h-0"
               >
-                <div className="flex h-full min-h-0 w-full px-3 pt-3">
+                <div className="flex h-full min-h-0 w-full">
                   {isMediaPanelOpen ? (
                     <ResizablePanelGroup
                       key="with-media"
                       direction="horizontal"
-                      className="flex-1 min-w-0 rounded-2xl bg-surface-elevated shadow-soft overflow-hidden"
+                      className="flex-1 min-w-0 bg-surface-elevated shadow-soft overflow-hidden"
                     >
                       <ResizablePanel
                         defaultSize={toolsPanel}
@@ -220,7 +220,7 @@ export default function Editor() {
                         onResize={setToolsPanel}
                         className="min-w-0"
                       >
-                        <div className="h-full w-full bg-panel-gradient p-3">
+                        <div className="h-full w-full overflow-hidden">
                           <MediaPanel />
                         </div>
                       </ResizablePanel>
@@ -237,7 +237,7 @@ export default function Editor() {
                       </ResizablePanel>
                     </ResizablePanelGroup>
                   ) : (
-                    <div className="flex-1 min-w-0 rounded-2xl bg-surface-elevated shadow-soft overflow-hidden">
+                    <div className="flex-1 min-w-0 bg-gradient-to-b from-surface-elevated/95 via-primary/5 to-primary/10 shadow-soft overflow-hidden">
                       {renderPreviewWorkspace()}
                     </div>
                   )}
@@ -253,8 +253,8 @@ export default function Editor() {
                 onResize={setTimeline}
                 className="min-h-0"
               >
-                <div className="h-full w-full px-3 pb-3">
-                  <div className="h-full rounded-2xl bg-surface-elevated shadow-soft">
+                <div className="h-full w-full">
+                  <div className="h-full bg-gradient-to-b from-surface-elevated/95 via-primary/5 to-primary/10 shadow-soft">
                     <Timeline />
                   </div>
                 </div>

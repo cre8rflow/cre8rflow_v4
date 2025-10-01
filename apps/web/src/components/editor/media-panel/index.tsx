@@ -41,7 +41,7 @@ export function MediaPanel() {
   };
 
   return (
-    <div className="h-full w-full overflow-hidden bg-panel">
+    <div className="h-full w-full overflow-hidden bg-gradient-to-b from-surface-elevated/95 via-primary/5 to-primary/10">
       {viewMap[activeTab]}
     </div>
   );
