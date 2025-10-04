@@ -9,6 +9,7 @@ import type { AgentRequestPayload } from "@/types/agent";
 import { env } from "@/env";
 import { twelveLabsService } from "@/lib/twelvelabs-service";
 import { getMediaIndexJobs } from "@/lib/supabase";
+import { waitUntil } from "@/lib/agent-utils";
 
 export const runtime = "nodejs";
 
@@ -48,6 +49,100 @@ function createSseHelpers(controller: ReadableStreamDefaultController) {
 }
 
 /**
+ * Stream reasoning/thinking from OpenAI
+ * Provides high-level explanation of what will be done
+ * NOTE: Does NOT send thought_done - caller handles it via .finally()
+ */
+async function streamReasoning({
+  prompt,
+  metadata,
+  safeSend,
+  signal,
+}: {
+  prompt: string;
+  metadata: AgentRequestPayload["metadata"];
+  safeSend: (data: unknown) => void;
+  signal: AbortSignal;
+}): Promise<void> {
+  if (!env.OPENAI_API_KEY) {
+    safeSend({ event: "thought", delta: "Analyzing your request…" });
+    return;
+  }
+
+  try {
+    const model = env.OPENAI_MODEL || "gpt-4o-mini";
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        stream: true,
+        max_tokens: 80,
+        temperature: 0.7,
+        messages: [
+          {
+            role: "system",
+            content:
+              "Explain in 2-3 clear sentences what you will do to edit this video. Be specific about actions (trim, cut, add captions) but brief. No technical jargon. Address the user directly using 'I'll'.",
+          },
+          {
+            role: "user",
+            content: `Command:\n${prompt}\n\nMetadata:\n${JSON.stringify(metadata)}`,
+          },
+        ],
+      }),
+      signal,
+    });
+
+    if (!resp.ok || !resp.body) {
+      safeSend({ event: "thought", delta: "Analyzing your request…" });
+      return;
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      if (signal.aborted) break;
+
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() ?? "";
+
+      for (const chunk of chunks) {
+        if (!chunk.startsWith("data:")) continue;
+        const data = chunk.slice(5).trim();
+        if (data === "[DONE]") {
+          return;
+        }
+
+        try {
+          const json = JSON.parse(data);
+          const delta = json?.choices?.[0]?.delta?.content;
+          if (delta) {
+            safeSend({ event: "thought", delta });
+          }
+        } catch {
+          // Ignore malformed chunks
+        }
+      }
+    }
+  } catch (error) {
+    // Network error or aborted - send fallback
+    if (!signal.aborted) {
+      safeSend({ event: "thought", delta: "Analyzing your request…" });
+    }
+  }
+}
+
+/**
  * GET handler for agent instruction streaming
  */
 export async function GET(request: NextRequest) {
@@ -64,6 +159,19 @@ export async function GET(request: NextRequest) {
         try {
           metadata = JSON.parse(metadataRaw);
         } catch {}
+
+        // Start thinking stream in parallel with completion tracking
+        const thoughtAbort = new AbortController();
+        let thoughtDone = false;
+        streamReasoning({
+          prompt,
+          metadata,
+          safeSend,
+          signal: thoughtAbort.signal,
+        }).finally(() => {
+          thoughtDone = true;
+          safeSend({ event: "thought_done" });
+        });
 
         // Start with planning log
         const aiFirst = env.AGENT_PLANNER_FALLBACK === "false";
@@ -94,6 +202,10 @@ export async function GET(request: NextRequest) {
         planInstructions({ prompt, metadata })
           .then(async (result) => {
             if (!result.ok) {
+              thoughtAbort.abort();
+              if (!thoughtDone) {
+                safeSend({ event: "thought_done" });
+              }
               safeSend({ event: "error", message: result.error });
               safeClose();
               return;
@@ -216,9 +328,34 @@ export async function GET(request: NextRequest) {
             });
 
             if (instructions.length === 0) {
+              thoughtAbort.abort();
+              if (!thoughtDone) {
+                safeSend({ event: "thought_done" });
+              }
               safeSend({ event: "error", message: "No steps planned" });
               safeClose();
               return;
+            }
+
+            // Wait for thinking to complete based on mode
+            const strictMode = env.AGENT_THOUGHT_STRICT === "true";
+            if (strictMode) {
+              // Wait for full thinking paragraph before executing steps
+              const timeout = env.AGENT_THINKING_TIMEOUT_MS;
+              const completed = await waitUntil(() => thoughtDone, timeout);
+              if (!completed) {
+                // Timeout - proceed anyway but log it
+                safeSend({
+                  event: "log",
+                  message: "Thinking timeout - proceeding with steps",
+                });
+              }
+            } else {
+              // Soft mode - abort thinking immediately before first step
+              thoughtAbort.abort();
+              if (!thoughtDone) {
+                safeSend({ event: "thought_done" });
+              }
             }
 
             // Stream each planned step
@@ -235,6 +372,10 @@ export async function GET(request: NextRequest) {
             safeClose();
           })
           .catch((err) => {
+            thoughtAbort.abort();
+            if (!thoughtDone) {
+              safeSend({ event: "thought_done" });
+            }
             safeSend({
               event: "error",
               message: err instanceof Error ? err.message : "Planner failed",
@@ -243,6 +384,10 @@ export async function GET(request: NextRequest) {
           });
       } catch (error) {
         // Handle any errors during processing
+        thoughtAbort.abort();
+        if (!thoughtDone) {
+          safeSend({ event: "thought_done" });
+        }
         safeSend({
           event: "error",
           message: error instanceof Error ? error.message : "Unknown error",

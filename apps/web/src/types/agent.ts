@@ -124,11 +124,12 @@ export interface AgentRequestPayload {
 
 // Streamed event over SSE for future implementation
 export interface AgentStreamEvent {
-  event: "step" | "log" | "error" | "done";
+  event: "step" | "log" | "error" | "done" | "thought" | "thought_done";
   stepIndex?: number;
   totalSteps?: number;
   instruction?: AnyInstruction;
   message?: string;
+  delta?: string; // For streaming thought chunks
 }
 
 // =============================================================================

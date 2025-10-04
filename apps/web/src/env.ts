@@ -38,6 +38,12 @@ export const env = createEnv({
       .enum(["true", "false"])
       .optional()
       .default("true"),
+    // Agent thinking/reasoning display
+    AGENT_THOUGHT_STRICT: z
+      .enum(["true", "false"])
+      .optional()
+      .default("false"),
+    AGENT_THINKING_TIMEOUT_MS: z.coerce.number().optional().default(3000),
   },
   client: {},
   runtimeEnv: {
@@ -65,5 +71,7 @@ export const env = createEnv({
     OPENAI_MODEL: process.env.OPENAI_MODEL,
     OPENAI_RESP_FORMAT: process.env.OPENAI_RESP_FORMAT,
     AGENT_PLANNER_FALLBACK: process.env.AGENT_PLANNER_FALLBACK,
+    AGENT_THOUGHT_STRICT: process.env.AGENT_THOUGHT_STRICT,
+    AGENT_THINKING_TIMEOUT_MS: process.env.AGENT_THINKING_TIMEOUT_MS,
   },
 });

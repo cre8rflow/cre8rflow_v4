@@ -1,7 +1,7 @@
 import modal
 from pydantic import BaseModel
 
-app = modal.App("opencut-transcription")
+app = modal.App("kallio-transcription")
 
 class TranscribeRequest(BaseModel):
     filename: str
@@ -15,7 +15,7 @@ class TranscribeRequest(BaseModel):
         .pip_install(["openai-whisper", "boto3", "fastapi[standard]", "pydantic", "cryptography"]),
     gpu="A10G",
     timeout=300, # 5m
-    secrets=[modal.Secret.from_name("opencut-r2-secrets")]
+    secrets=[modal.Secret.from_name("kallio-r2-secrets")]
 )
 @modal.fastapi_endpoint(method="POST")
 def transcribe_audio(request: TranscribeRequest):

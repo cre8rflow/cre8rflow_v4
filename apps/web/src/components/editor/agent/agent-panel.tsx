@@ -36,6 +36,7 @@ const quickSuggestions: { label: string; prompt: string }[] = [
 export function AgentPanel() {
   const runAgent = useAgentOrchestrator();
   const eventSourceRef = useRef<EventSource | null>(null);
+  const thinkingLogIdRef = useRef<string | null>(null);
 
   const {
     status,
@@ -49,8 +50,13 @@ export function AgentPanel() {
   } = useAgentUIStore();
 
   const [prompt, setPrompt] = useState("");
+  const [thinkingDeltas, setThinkingDeltas] = useState<string[]>([]);
   const [logs, setLogs] = useState<
-    { id: string; type: "log" | "step" | "done" | "error"; message: string }[]
+    {
+      id: string;
+      type: "log" | "step" | "done" | "error" | "thought";
+      message: string;
+    }[]
   >([]);
 
   const isRunning = status === "running";
@@ -62,12 +68,13 @@ export function AgentPanel() {
   }, []);
 
   const appendLog = (entry: {
-    type: "log" | "step" | "done" | "error";
+    type: "log" | "step" | "done" | "error" | "thought";
     message: string;
+    id?: string;
   }) => {
     setLogs((prev) => [
       ...prev,
-      { id: `${Date.now()}-${prev.length}`, ...entry },
+      { id: entry.id || `${Date.now()}-${prev.length}`, ...entry },
     ]);
   };
 
@@ -75,8 +82,15 @@ export function AgentPanel() {
     const trimmed = command.trim();
     if (!trimmed) return;
 
+    // Prevent double-firing
+    if (isRunning) return;
+
     eventSourceRef.current?.close();
     setLogs([]);
+
+    // Clear any previous thinking state
+    setThinkingDeltas([]);
+    thinkingLogIdRef.current = null;
 
     startSession(trimmed);
     appendLog({ type: "log", message: `Starting: "${trimmed}"` });
@@ -90,6 +104,45 @@ export function AgentPanel() {
         if (data.event === "log" && data.message) {
           updateMessage(data.message);
           appendLog({ type: "log", message: data.message });
+        } else if (data.event === "thought" && data.delta) {
+          // Append new delta to array (React only renders the new one)
+          setThinkingDeltas((prev) => [...prev, data.delta]);
+
+          if (!thinkingLogIdRef.current) {
+            // Create new thinking log entry (empty message, deltas rendered separately)
+            const id = `thought-${Date.now()}`;
+            thinkingLogIdRef.current = id;
+            appendLog({ type: "thought", message: "", id });
+          }
+        } else if (data.event === "thought_done") {
+          // Capture current ref ID before any state changes
+          const currentThinkingId = thinkingLogIdRef.current;
+
+          // Use functional setState to access latest deltas
+          setThinkingDeltas((latestDeltas) => {
+            const fullText = latestDeltas.join("");
+
+            // Console log the complete thought as one paragraph
+            if (fullText) {
+              console.log("[Thinking] Complete:", fullText);
+            }
+
+            // Update the log entry with full text using captured ID
+            if (currentThinkingId) {
+              setLogs((prev) =>
+                prev.map((log) =>
+                  log.id === currentThinkingId
+                    ? { ...log, message: fullText }
+                    : log
+                )
+              );
+            }
+
+            return []; // Clear deltas
+          });
+
+          // Clear ref AFTER state updates are queued
+          thinkingLogIdRef.current = null;
         } else if (data.event === "step") {
           const desc =
             data.instruction?.description ||
@@ -226,13 +279,26 @@ export function AgentPanel() {
                   "rounded-lg border border-border/30 bg-surface-elevated px-3 py-2 text-xs font-medium",
                   entry.type === "error" && "border-red-500/40 text-red-300",
                   entry.type === "done" &&
-                    "border-emerald-500/40 text-emerald-300"
+                    "border-emerald-500/40 text-emerald-300",
+                  entry.type === "thought" &&
+                    "border-primary/40 bg-primary/5 text-primary-300 italic"
                 )}
               >
                 <span className="uppercase tracking-wide text-[0.65rem] opacity-70">
-                  {entry.type}
+                  {entry.type === "thought" ? "thinking" : entry.type}
                 </span>
-                <span className="ml-2 text-foreground/90">{entry.message}</span>
+                <span className="ml-2 text-foreground/90">
+                  {entry.type === "thought" &&
+                  entry.id === thinkingLogIdRef.current ? (
+                    // Active thinking - render deltas as separate spans for typewriter effect
+                    thinkingDeltas.map((delta, idx) => (
+                      <span key={idx}>{delta}</span>
+                    ))
+                  ) : (
+                    // Completed log or other type - render message normally
+                    entry.message
+                  )}
+                </span>
               </div>
             ))
           )}

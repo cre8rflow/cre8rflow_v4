@@ -145,6 +145,16 @@ export function startAgentStream({
           return;
         }
 
+        case "thought": {
+          // Thought events are handled by agent panel only
+          break;
+        }
+
+        case "thought_done": {
+          // Thought events are handled by agent panel only
+          break;
+        }
+
         case "step": {
           if (streamEvent.instruction) {
             // Notify about the step
