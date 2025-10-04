@@ -35,12 +35,14 @@ export interface ExecutionResult {
   success: true;
   targetsResolved: number;
   message?: string;
+  meta?: Record<string, unknown>;
 }
 
 export interface ExecutionError {
   success: false;
   error: string;
   targetsResolved?: number;
+  meta?: Record<string, unknown>;
 }
 
 export type ExecutionOutcome = ExecutionResult | ExecutionError;
@@ -809,6 +811,7 @@ function executeTwelveLabsApplyCut(instruction: {
   start: number;
   end: number;
   description?: string;
+  query?: string;
 }): ExecutionOutcome {
   const mediaFiles = useMediaStore.getState().mediaFiles;
   const timeline = useTimelineStore.getState();
@@ -830,6 +833,7 @@ function executeTwelveLabsApplyCut(instruction: {
   interface TargetElement {
     trackId: string;
     elementId: string;
+    startTime: number;
     trimStart: number;
     trimEnd: number;
     duration: number;
@@ -842,6 +846,7 @@ function executeTwelveLabsApplyCut(instruction: {
         targets.push({
           trackId: track.id,
           elementId: el.id,
+          startTime: el.startTime,
           trimStart: el.trimStart,
           trimEnd: el.trimEnd,
           duration: el.duration,
@@ -891,6 +896,8 @@ function executeTwelveLabsApplyCut(instruction: {
   let successCount = 0;
   const errors: string[] = [];
   let totalRemovedDuration = 0;
+  let summaryMinStart = Number.POSITIVE_INFINITY;
+  let summaryMaxEnd = Number.NEGATIVE_INFINITY;
 
   for (const target of validTargets) {
     // Convert TwelveLabs source video timestamps to element-relative coordinates
@@ -915,6 +922,12 @@ function executeTwelveLabsApplyCut(instruction: {
       continue;
     }
 
+    // Compute pre-edit global timeline window for summary BEFORE edits
+    const preStart = target.startTime + clampedStart;
+    const preEnd = target.startTime + clampedEnd;
+    if (preStart < summaryMinStart) summaryMinStart = preStart;
+    if (preEnd > summaryMaxEnd) summaryMaxEnd = preEnd;
+
     const result = cutOut({
       plan: {
         type: "cut-out",
@@ -929,6 +942,7 @@ function executeTwelveLabsApplyCut(instruction: {
       successCount++;
       if (result.removedDuration)
         totalRemovedDuration += result.removedDuration;
+      // already captured pre-edit window above
     } else {
       errors.push(result.error || `Unknown error on ${target.elementId}`);
     }
@@ -943,6 +957,14 @@ function executeTwelveLabsApplyCut(instruction: {
       success: true,
       targetsResolved: validTargets.length,
       message: msg,
+      // Attach meta for summarizer (pre-edit timeline range + query)
+      meta: {
+        timelineRange:
+          Number.isFinite(summaryMinStart) && Number.isFinite(summaryMaxEnd)
+            ? { start: summaryMinStart, end: summaryMaxEnd }
+            : undefined,
+        tlQuery: instruction.query,
+      },
     };
   }
 

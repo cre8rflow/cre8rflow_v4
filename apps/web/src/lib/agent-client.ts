@@ -9,6 +9,7 @@ import type {
   AnyInstruction,
 } from "@/types/agent";
 import { executeInstruction } from "./agent-executor";
+import { env } from "@/env";
 import { useTimelineCommandStore } from "@/stores/timeline-command-store";
 import type { CommandEffect } from "@/stores/timeline-command-store";
 const mapInstructionToEffect = (instructionType: string): CommandEffect => {
@@ -25,6 +26,124 @@ const mapInstructionToEffect = (instructionType: string): CommandEffect => {
       return "generic";
   }
 };
+
+// ---------------------------------------------------------------------------
+// Executed actions aggregation for post-run summary (module-scoped)
+// ---------------------------------------------------------------------------
+
+export type ExecutedAction =
+  | {
+      kind: "trim";
+      sides: { left?: string; right?: string };
+      targetCount: number;
+    }
+  | {
+      kind: "cut";
+      range: {
+        mode: string;
+        start?: number;
+        end?: number;
+        left?: number;
+        right?: number;
+      };
+      targetCount: number;
+    }
+  | { kind: "captions" }
+  | { kind: "deadspace"; targetCount: number };
+
+const executedActions: ExecutedAction[] = [];
+
+function recordExecutedFromInstruction(
+  instruction: AnyInstruction,
+  targetCount: number
+): void {
+  if (instruction.type === "trim") {
+    const left = instruction.sides?.left?.mode;
+    const right = instruction.sides?.right?.mode;
+    executedActions.push({ kind: "trim", sides: { left, right }, targetCount });
+  } else if (instruction.type === "cut-out") {
+    const r = instruction.range as any;
+    executedActions.push({
+      kind: "cut",
+      range: {
+        mode: r.mode,
+        start: r.start,
+        end: r.end,
+        left: r.left,
+        right: r.right,
+      },
+      targetCount,
+    });
+  } else if (instruction.type === "captions.generate") {
+    executedActions.push({ kind: "captions" });
+  } else if (instruction.type === "deadspace.trim") {
+    executedActions.push({ kind: "deadspace", targetCount });
+  } else if ((instruction as any).type === "twelvelabs.applyCut") {
+    const i = instruction as any;
+    executedActions.push({
+      kind: "cut",
+      range: { mode: "timeline", start: i.start, end: i.end },
+      targetCount,
+      meta: { source: "twelvelabs", query: i.query || i.query_text },
+    } as ExecutedAction);
+  }
+}
+
+export async function summarizeExecutedActions(
+  actions: ExecutedAction[]
+): Promise<string> {
+  const bullets: string[] = [];
+  for (const a of actions) {
+    if (a.kind === "trim") {
+      bullets.push(
+        `Trim: ${a.sides.left ? `left(${a.sides.left})` : ""}${
+          a.sides.left && a.sides.right ? "/" : ""
+        }${a.sides.right ? `right(${a.sides.right})` : ""} on ${a.targetCount} clip(s)`
+      );
+    } else if (a.kind === "cut") {
+      const r = a.range as any;
+      let rangeText = "";
+      if (r.mode === "timeline" || r.mode === "globalSeconds" || r.mode === "elementSeconds" || r.mode === "source") {
+        const s = Number(r.start ?? 0);
+        const e = Number(r.end ?? 0);
+        rangeText = `${s.toFixed(2)}–${e.toFixed(2)}s`;
+      } else {
+        rangeText = `around playhead (${r.left ?? 0}s/${r.right ?? 0}s)`;
+      }
+      const hint = (a as any).meta?.source === "twelvelabs" && (a as any).meta?.query
+        ? ` (${(a as any).meta.query})`
+        : "";
+      bullets.push(`Cut: removed ${rangeText}${hint} on ${a.targetCount} clip(s)`);
+    } else if (a.kind === "captions") {
+      bullets.push("Captions: added to match spoken audio");
+    } else if (a.kind === "deadspace") {
+      bullets.push(`Trimmed silence on ${a.targetCount} clip(s)`);
+    }
+  }
+
+  // Call server route to summarize with server-side key
+  try {
+    const resp = await fetch("/api/agent/summarize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bullets, actions }),
+    });
+    if (!resp.ok) throw new Error(String(resp.status));
+    const data = await resp.json();
+    return (data?.summary as string) || "Made small timeline adjustments.";
+  } catch {
+    const fallback = bullets.length
+      ? `Completed edits: ${bullets.join("; ")}.`
+      : "Made small timeline adjustments.";
+    return fallback;
+  }
+}
+
+export function getAndClearExecutedActions(): ExecutedAction[] {
+  const copy = executedActions.slice();
+  executedActions.length = 0;
+  return copy;
+}
 
 /**
  * Start an agent stream session with SSE
@@ -72,6 +191,27 @@ export function startAgentStream({
   const STEP_DELAY_MS = 600;
   const processedInstructionKeys = new Set<string>();
 
+  // ---------------------------------------------------------------------------
+  // Executed actions aggregation for post-run summary
+  // ---------------------------------------------------------------------------
+
+  type ExecutedAction =
+    | {
+        kind: "trim";
+        sides: { left?: string; right?: string };
+        targetCount: number;
+      }
+    | {
+        kind: "cut";
+        range: { mode: string; start?: number; end?: number; left?: number; right?: number };
+        targetCount: number;
+        meta?: { source?: "twelvelabs"; query?: string };
+      }
+    | { kind: "captions" }
+    | { kind: "deadspace"; targetCount: number };
+
+  // (Removed duplicate inner definitions; top-level versions are exported)
+
   const processQueue = () => {
     if (isProcessing) return;
     const next = pendingSteps.shift();
@@ -113,6 +253,27 @@ export function startAgentStream({
         totalSteps: effectiveTotal,
         phase: "executing",
       });
+      // Record executed action for later summarization with accurate counts
+      if (result.success) {
+        const resolved = (result as any).targetsResolved ?? 1;
+        // Prefer pre-edit timeline range if provided by executor meta
+        if ((instruction as any).type === "twelvelabs.applyCut" && (result as any).meta?.timelineRange) {
+          const r = (result as any).meta.timelineRange as { start: number; end: number };
+          // prefer explicit query_text from planner if present; fallback to tlQuery
+          const query = (instruction as any).query_text || (result as any).meta?.tlQuery;
+          recordExecutedFromInstruction(
+            {
+              type: "twelvelabs.applyCut",
+              start: r.start,
+              end: r.end,
+              query,
+            } as any,
+            resolved
+          );
+        } else {
+          recordExecutedFromInstruction(instruction as AnyInstruction, resolved);
+        }
+      }
     }
 
     // Wait before processing next step to allow animation to be seen

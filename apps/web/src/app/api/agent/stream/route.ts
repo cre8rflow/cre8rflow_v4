@@ -213,9 +213,13 @@ export async function GET(request: NextRequest) {
 
             // Resolve TwelveLabs search steps server-side into applyCut
             const instructions: any[] = [];
+            // Helper to normalize phrases (remove surrounding quotes)
+            const stripQuotes = (s: string) =>
+              s?.trim().replace(/^['"“”‘’]+|['"“”‘’]+$/g, "");
+
             for (const instr of result.steps) {
               if (instr.type === "twelvelabs.search") {
-                const query = instr.query;
+                const query = stripQuotes(instr.query);
                 safeSend({
                   event: "log",
                   message: `Calling TwelveLabs for: ${query}`,
@@ -297,6 +301,8 @@ export async function GET(request: NextRequest) {
                     videoId: top.video_id,
                     start: top.start,
                     end: top.end,
+                    query,
+                    query_text: query, // explicit text for downstream summarization
                     description: `Cut out matched content (${top.start.toFixed(2)}–${top.end.toFixed(2)}s)`,
                   });
                 } catch (e: any) {
@@ -384,10 +390,8 @@ export async function GET(request: NextRequest) {
           });
       } catch (error) {
         // Handle any errors during processing
-        thoughtAbort.abort();
-        if (!thoughtDone) {
-          safeSend({ event: "thought_done" });
-        }
+        // We are outside the lexical scope of thoughtAbort/thoughtDone here on some engines.
+        // Just send a generic error and close safely.
         safeSend({
           event: "error",
           message: error instanceof Error ? error.message : "Unknown error",

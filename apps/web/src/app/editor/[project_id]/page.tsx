@@ -42,7 +42,7 @@ export default function Editor() {
           <ResizablePanelGroup direction="horizontal" className="flex h-full">
             <ResizablePanel
               defaultSize={100 - propertiesPanel}
-              minSize={45}
+              minSize={35}
               onResize={(size) => setPropertiesPanel(100 - size)}
               className="min-w-0"
             >
@@ -54,7 +54,6 @@ export default function Editor() {
             <ResizablePanel
               defaultSize={propertiesPanel}
               minSize={20}
-              maxSize={40}
               onResize={setPropertiesPanel}
               className="min-w-0"
             >

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import { AgentChatThread } from "./agent-chat-thread";
 import {
   Loader2,
   CheckCircle2,
@@ -15,7 +16,11 @@ import {
 } from "lucide-react";
 
 import { useAgentOrchestrator } from "@/hooks/use-agent-orchestrator";
-import { useAgentUIStore, type AgentRunStatus } from "@/stores/agent-ui-store";
+import {
+  useAgentUIStore,
+  type AgentRunStatus,
+  type ChatMessage,
+} from "@/stores/agent-ui-store";
 
 const quickSuggestions: { label: string; prompt: string }[] = [
   { label: "Auto-Cut Silence", prompt: "auto-cut silence across the timeline" },
@@ -47,17 +52,22 @@ export function AgentPanel() {
     markComplete,
     markError,
     reset,
+    // chat state
+    hasStarted,
+    messages,
+    setHasStarted,
+    addUserMessage,
+    addAgentMessage,
+    addLogMessage,
+    appendThoughtDelta,
+    finalizeThought,
+    clearMessages,
+    createThinkingMessage,
+    updateMessageById,
   } = useAgentUIStore();
 
   const [prompt, setPrompt] = useState("");
-  const [thinkingDeltas, setThinkingDeltas] = useState<string[]>([]);
-  const [logs, setLogs] = useState<
-    {
-      id: string;
-      type: "log" | "step" | "done" | "error" | "thought";
-      message: string;
-    }[]
-  >([]);
+  const endRef = useRef<HTMLDivElement | null>(null);
 
   const isRunning = status === "running";
 
@@ -67,16 +77,9 @@ export function AgentPanel() {
     };
   }, []);
 
-  const appendLog = (entry: {
-    type: "log" | "step" | "done" | "error" | "thought";
-    message: string;
-    id?: string;
-  }) => {
-    setLogs((prev) => [
-      ...prev,
-      { id: entry.id || `${Date.now()}-${prev.length}`, ...entry },
-    ]);
-  };
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
 
   const handleStart = (command: string) => {
     const trimmed = command.trim();
@@ -86,14 +89,16 @@ export function AgentPanel() {
     if (isRunning) return;
 
     eventSourceRef.current?.close();
-    setLogs([]);
-
-    // Clear any previous thinking state
-    setThinkingDeltas([]);
     thinkingLogIdRef.current = null;
 
+    // Chat UX: add user's message and mark started
+    addUserMessage(trimmed);
+    setHasStarted(true);
     startSession(trimmed);
-    appendLog({ type: "log", message: `Starting: "${trimmed}"` });
+
+    // Optimistic thinking row immediately
+    thinkingLogIdRef.current = createThinkingMessage();
+    updateMessage("Thinking…");
 
     const es = runAgent({ prompt: trimmed });
     eventSourceRef.current = es;
@@ -102,60 +107,52 @@ export function AgentPanel() {
       try {
         const data = JSON.parse((event as MessageEvent).data);
         if (data.event === "log" && data.message) {
+          // Filter logs from chat; keep header status only
           updateMessage(data.message);
-          appendLog({ type: "log", message: data.message });
         } else if (data.event === "thought" && data.delta) {
-          // Append new delta to array (React only renders the new one)
-          setThinkingDeltas((prev) => [...prev, data.delta]);
-
-          if (!thinkingLogIdRef.current) {
-            // Create new thinking log entry (empty message, deltas rendered separately)
-            const id = `thought-${Date.now()}`;
-            thinkingLogIdRef.current = id;
-            appendLog({ type: "thought", message: "", id });
-          }
+          // Stream thought text into a single message
+          const id = appendThoughtDelta(thinkingLogIdRef.current, data.delta);
+          thinkingLogIdRef.current = id;
         } else if (data.event === "thought_done") {
-          // Capture current ref ID before any state changes
           const currentThinkingId = thinkingLogIdRef.current;
-
-          // Use functional setState to access latest deltas
-          setThinkingDeltas((latestDeltas) => {
-            const fullText = latestDeltas.join("");
-
-            // Console log the complete thought as one paragraph
-            if (fullText) {
-              console.log("[Thinking] Complete:", fullText);
-            }
-
-            // Update the log entry with full text using captured ID
-            if (currentThinkingId) {
-              setLogs((prev) =>
-                prev.map((log) =>
-                  log.id === currentThinkingId
-                    ? { ...log, message: fullText }
-                    : log
-                )
-              );
-            }
-
-            return []; // Clear deltas
-          });
-
-          // Clear ref AFTER state updates are queued
+          if (currentThinkingId) {
+            finalizeThought(currentThinkingId);
+          }
           thinkingLogIdRef.current = null;
         } else if (data.event === "step") {
-          const desc =
-            data.instruction?.description ||
-            `Step ${(data.stepIndex ?? 0) + 1}/${data.totalSteps ?? "?"}`;
-          updateMessage(desc);
-          appendLog({ type: "step", message: desc });
+          const desc = data.instruction?.description;
+          if (desc) {
+            // Update header only; don't add chat bubble since we'll show a final AI summary
+            updateMessage(desc);
+          }
         } else if (data.event === "done") {
           markComplete("Command processed successfully");
-          appendLog({ type: "done", message: "Agent session complete" });
+          // Insert a placeholder while summarizing
+          const placeholderId = addAgentMessage("Summarizing edits…");
+          // Summarize in parallel and then replace placeholder
+          (async () => {
+            try {
+              const mod = await import("@/lib/agent-client");
+              const actions = mod.getAndClearExecutedActions();
+              const summary = await mod.summarizeExecutedActions(actions);
+              if (!actions.length) {
+                // If bullets were empty, keep the message minimal rather than asking the user.
+                updateMessageById(placeholderId, {
+                  content: summary || "Completed edits.",
+                });
+                return;
+              }
+              updateMessageById(placeholderId, { content: summary });
+            } catch {
+              updateMessageById(placeholderId, {
+                content: "Made timeline adjustments.",
+              });
+            }
+          })();
           eventSourceRef.current?.close();
         } else if (data.event === "error") {
           markError(data.message || "Agent error");
-          appendLog({ type: "error", message: data.message || "Agent error" });
+          addAgentMessage(data.message || "Agent error");
           eventSourceRef.current?.close();
         }
       } catch {
@@ -165,7 +162,7 @@ export function AgentPanel() {
 
     es.addEventListener("error", () => {
       markError("Stream connection error");
-      appendLog({ type: "error", message: "Stream connection error" });
+      addAgentMessage("Stream connection error");
       eventSourceRef.current?.close();
     });
   };
@@ -178,8 +175,16 @@ export function AgentPanel() {
 
   const handleStop = () => {
     eventSourceRef.current?.close();
-    appendLog({ type: "log", message: "Session cancelled" });
+    addLogMessage("Session cancelled");
     reset();
+  };
+
+  const handleNewSession = () => {
+    eventSourceRef.current?.close();
+    thinkingLogIdRef.current = null;
+    clearMessages();
+    reset();
+    setHasStarted(false);
   };
 
   const statusMeta = useMemo(() => getStatusMeta(status), [status]);
@@ -199,9 +204,9 @@ export function AgentPanel() {
             />
           </div>
           <div>
-            <p className="text-sm font-semibold">Command Console</p>
-            <p className="text-xs text-muted-foreground">
-              Describe the edit you want—Cre8rFlow will handle the timeline.
+            <p className="text-sm font-semibold tracking-tight">Command Console</p>
+            <p className="text-[11px] text-muted-foreground leading-5">
+              Describe edits you want. Kallio will handle it for you.
             </p>
           </div>
         </div>
@@ -216,23 +221,25 @@ export function AgentPanel() {
         </span>
       </div>
 
-      <div className="px-4 pb-3">
+      {!hasStarted && (
+        <div className="px-4 pb-3">
         <div className="grid gap-2 sm:grid-cols-2">
-          {quickSuggestions.map((suggestion) => (
-            <Button
-              key={suggestion.label}
-              type="button"
-              variant="secondary"
-              className="justify-between rounded-xl border border-border/40 bg-quick-action/50 px-3 py-4 text-left text-sm font-medium text-foreground shadow-soft transition hover:bg-quick-action"
-              onClick={() => handleStart(suggestion.prompt)}
-              disabled={isRunning}
-            >
-              <span>{suggestion.label}</span>
-              <Sparkles className="h-4 w-4 opacity-80" />
-            </Button>
-          ))}
+            {quickSuggestions.map((suggestion) => (
+              <Button
+                key={suggestion.label}
+                type="button"
+                variant="secondary"
+              className="justify-between rounded-xl border border-border/40 bg-quick-action/50 px-3.5 py-3.5 text-left text-[16px] font-medium text-foreground shadow-soft transition hover:bg-quick-action"
+                onClick={() => handleStart(suggestion.prompt)}
+                disabled={isRunning}
+              >
+                <span>{suggestion.label}</span>
+                <Sparkles className="h-4 w-4 opacity-80" />
+              </Button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="px-4 pb-3">
         <div className="rounded-2xl border border-border/40 bg-surface-base/70 px-4 py-3">
@@ -266,43 +273,7 @@ export function AgentPanel() {
       </div>
 
       <ScrollArea className="flex-1 px-4">
-        <div className="space-y-2 pb-4">
-          {logs.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border/40 bg-surface-base/50 p-4 text-sm text-muted-foreground">
-              Agent activity will appear here once a command is running.
-            </div>
-          ) : (
-            logs.map((entry) => (
-              <div
-                key={entry.id}
-                className={cn(
-                  "rounded-lg border border-border/30 bg-surface-elevated px-3 py-2 text-xs font-medium",
-                  entry.type === "error" && "border-red-500/40 text-red-300",
-                  entry.type === "done" &&
-                    "border-emerald-500/40 text-emerald-300",
-                  entry.type === "thought" &&
-                    "border-primary/40 bg-primary/5 text-primary-300 italic"
-                )}
-              >
-                <span className="uppercase tracking-wide text-[0.65rem] opacity-70">
-                  {entry.type === "thought" ? "thinking" : entry.type}
-                </span>
-                <span className="ml-2 text-foreground/90">
-                  {entry.type === "thought" &&
-                  entry.id === thinkingLogIdRef.current ? (
-                    // Active thinking - render deltas as separate spans for typewriter effect
-                    thinkingDeltas.map((delta, idx) => (
-                      <span key={idx}>{delta}</span>
-                    ))
-                  ) : (
-                    // Completed log or other type - render message normally
-                    entry.message
-                  )}
-                </span>
-              </div>
-            ))
-          )}
-        </div>
+        <AgentChatThread messages={messages} />
       </ScrollArea>
 
       <div className="border-t border-border/40 px-4 py-3">
@@ -319,7 +290,7 @@ export function AgentPanel() {
                 }
               }}
               disabled={isRunning}
-              className="h-11 rounded-xl bg-surface-base/70"
+              className="h-11 rounded-xl bg-surface-base/70 text-[16px]"
             />
             <ArrowUpRight className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           </div>
@@ -342,6 +313,18 @@ export function AgentPanel() {
               onClick={submitPrompt}
             >
               Send
+            </Button>
+          )}
+          {!isRunning && hasStarted && (
+            <Button
+              type="button"
+              variant="text"
+              size="sm"
+              className="ml-auto text-muted-foreground hover:text-foreground"
+              onClick={handleNewSession}
+              title="Start a new session"
+            >
+              New session
             </Button>
           )}
         </div>
