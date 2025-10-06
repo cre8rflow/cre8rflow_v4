@@ -565,12 +565,12 @@ function normalizePlannedSteps(
     !steps.some((s: any) => s.type === "captions.generate")
   ) {
     steps = [
+      ...steps,
       {
         type: "captions.generate",
         language: "auto",
         description: "Generate captions",
       } as any,
-      ...steps,
     ];
   }
 

@@ -227,7 +227,10 @@ export function MediaView() {
               title="Indexing queued"
             >
               <div className="rounded-full bg-background/90 backdrop-blur-xs border border-border/60 shadow-sm h-7 w-7 inline-flex items-center justify-center">
-                <Loader2 className="h-3.5 w-3.5 text-primary animate-spin" aria-hidden="true" />
+                <Loader2
+                  className="h-3.5 w-3.5 text-primary animate-spin"
+                  aria-hidden="true"
+                />
               </div>
             </div>
           );

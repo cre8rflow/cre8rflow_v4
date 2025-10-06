@@ -28,6 +28,34 @@ import { useTimelineCommandStore } from "@/stores/timeline-command-store";
 import type { CommandEffect } from "@/stores/timeline-command-store";
 
 // =============================================================================
+// ASYNC TASK TRACKER (exported)
+// =============================================================================
+
+let __pendingAsyncTasks = 0;
+const __asyncWaiters: Array<() => void> = [];
+
+export function beginAsyncTask(): () => void {
+  __pendingAsyncTasks++;
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    __pendingAsyncTasks = Math.max(0, __pendingAsyncTasks - 1);
+    if (__pendingAsyncTasks === 0) {
+      const waiters = __asyncWaiters.splice(0, __asyncWaiters.length);
+      for (const w of waiters) w();
+    }
+  };
+}
+
+export function whenAsyncIdle(): Promise<void> {
+  if (__pendingAsyncTasks === 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    __asyncWaiters.push(resolve);
+  });
+}
+
+// =============================================================================
 // RESULT TYPES
 // =============================================================================
 
@@ -376,6 +404,10 @@ function executeCaptionsGenerateInstruction({
   language?: string;
   description?: string;
 }): ExecutionOutcome {
+  const endAsync = beginAsyncTask();
+  const ui = useAgentUIStore.getState();
+  const bubbleId = ui.addAgentMessage("Adding captions…");
+
   (async () => {
     try {
       toast.message(description || "Starting captions generation…");
@@ -492,10 +524,16 @@ function executeCaptionsGenerateInstruction({
         });
       }
 
+      ui.updateMessageById(bubbleId, {
+        content: `Added ${shortCaptions.length} captions.`,
+      });
       toast.success(`Added ${shortCaptions.length} captions`);
     } catch (e: any) {
       console.error("Agent captions failed:", e);
+      ui.updateMessageById(bubbleId, { content: "Captions failed." });
       toast.error(e?.message || "Captions failed");
+    } finally {
+      endAsync();
     }
   })();
 
@@ -521,6 +559,10 @@ function executeDeadspaceTrimInstruction({
     description?: string;
   };
 }): ExecutionOutcome {
+  const endAsync = beginAsyncTask();
+  const ui = useAgentUIStore.getState();
+  const bubbleId = ui.addAgentMessage("Trimming dead space…");
+
   (async () => {
     const lang = (instruction.language || "auto").toLowerCase();
     const timeline = useTimelineStore.getState();
@@ -701,21 +743,33 @@ function executeDeadspaceTrimInstruction({
       }
 
       if (successCount > 0 && errors.length === 0) {
+        ui.updateMessageById(bubbleId, {
+          content: `Trimmed dead space on ${successCount} clip${successCount > 1 ? "s" : ""}.`,
+        });
         toast.success(
           `Trimmed dead space on ${successCount} clip${successCount > 1 ? "s" : ""}`
         );
       } else if (successCount > 0) {
+        ui.updateMessageById(bubbleId, {
+          content: `Partial: ${successCount} trimmed, ${skippedCount} skipped, ${errors.length} errors.`,
+        });
         toast.warning(
           `Trimmed dead space on ${successCount}, ${skippedCount} skipped, ${errors.length} errors`
         );
       } else {
+        ui.updateMessageById(bubbleId, {
+          content: `No clips trimmed. ${skippedCount} skipped.`,
+        });
         toast.error(
           `No clips trimmed. ${skippedCount} skipped${errors.length ? ", errors occurred" : ""}`
         );
       }
     } catch (e: any) {
       console.error("Deadspace trim failed:", e);
+      ui.updateMessageById(bubbleId, { content: "Deadspace trim failed." });
       toast.error(e?.message || "Deadspace trim failed");
+    } finally {
+      endAsync();
     }
   })();
 

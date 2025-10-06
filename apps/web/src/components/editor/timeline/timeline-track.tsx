@@ -858,7 +858,10 @@ export function TimelineTrackContent({
               insertIndex = mainTrackIndex + 1;
             } else {
               // Fallback when no main track yet
-              insertIndex = Math.max(0, currentTrackIndex + (dropPosition === "above" ? 0 : 1));
+              insertIndex = Math.max(
+                0,
+                currentTrackIndex + (dropPosition === "above" ? 0 : 1)
+              );
             }
 
             targetTrackId = insertTrackAt("text", insertIndex);

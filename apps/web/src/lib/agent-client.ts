@@ -12,6 +12,7 @@ import { executeInstruction } from "./agent-executor";
 import { env } from "@/env";
 import { useTimelineCommandStore } from "@/stores/timeline-command-store";
 import type { CommandEffect } from "@/stores/timeline-command-store";
+import { formatSearchQuery } from "@/lib/agent-utils";
 const mapInstructionToEffect = (instructionType: string): CommandEffect => {
   switch (instructionType) {
     case "trim":
@@ -47,6 +48,12 @@ export type ExecutedAction =
         right?: number;
       };
       targetCount: number;
+      meta?: {
+        source?: string;
+        searchQuery?: string;
+        searchSummary?: string;
+        searchWasQuoted?: boolean;
+      };
     }
   | { kind: "captions" }
   | { kind: "deadspace"; targetCount: number };
@@ -80,17 +87,28 @@ function recordExecutedFromInstruction(
     executedActions.push({ kind: "deadspace", targetCount });
   } else if ((instruction as any).type === "twelvelabs.applyCut") {
     const i = instruction as any;
+    const normalized = i.queryNormalized;
+    const searchQuery =
+      i.query || i.query_text || normalized?.text || normalized?.raw || "";
+    const searchSummary =
+      i.summaryQuery || formatSearchQuery(normalized) || searchQuery;
     executedActions.push({
       kind: "cut",
       range: { mode: "timeline", start: i.start, end: i.end },
       targetCount,
-      meta: { source: "twelvelabs", query: i.query || i.query_text },
-    } as ExecutedAction);
+      meta: {
+        source: "twelvelabs",
+        searchQuery,
+        searchSummary,
+        searchWasQuoted: normalized?.wasQuoted,
+      },
+    });
   }
 }
 
 export async function summarizeExecutedActions(
-  actions: ExecutedAction[]
+  actions: ExecutedAction[],
+  onDelta?: (delta: string) => void
 ): Promise<string> {
   const bullets: string[] = [];
   for (const a of actions) {
@@ -103,17 +121,26 @@ export async function summarizeExecutedActions(
     } else if (a.kind === "cut") {
       const r = a.range as any;
       let rangeText = "";
-      if (r.mode === "timeline" || r.mode === "globalSeconds" || r.mode === "elementSeconds" || r.mode === "source") {
+      if (
+        r.mode === "timeline" ||
+        r.mode === "globalSeconds" ||
+        r.mode === "elementSeconds" ||
+        r.mode === "source"
+      ) {
         const s = Number(r.start ?? 0);
         const e = Number(r.end ?? 0);
         rangeText = `${s.toFixed(2)}–${e.toFixed(2)}s`;
       } else {
         rangeText = `around playhead (${r.left ?? 0}s/${r.right ?? 0}s)`;
       }
-      const hint = (a as any).meta?.source === "twelvelabs" && (a as any).meta?.query
-        ? ` (${(a as any).meta.query})`
-        : "";
-      bullets.push(`Cut: removed ${rangeText}${hint} on ${a.targetCount} clip(s)`);
+      const meta = a.meta;
+      const hint =
+        meta?.source === "twelvelabs" && meta?.searchSummary
+          ? ` via search${meta.searchWasQuoted ? " (quoted)" : " (no quotes)"} ${meta.searchSummary}`
+          : "";
+      bullets.push(
+        `Cut: removed ${rangeText}${hint} on ${a.targetCount} clip(s)`
+      );
     } else if (a.kind === "captions") {
       bullets.push("Captions: added to match spoken audio");
     } else if (a.kind === "deadspace") {
@@ -121,20 +148,57 @@ export async function summarizeExecutedActions(
     }
   }
 
-  // Call server route to summarize with server-side key
+  const fallback = bullets.length
+    ? `Completed edits: ${bullets.join("; ")}.`
+    : "Made small timeline adjustments.";
+
+  // Call server route to summarize with streaming support
   try {
     const resp = await fetch("/api/agent/summarize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ bullets, actions }),
     });
-    if (!resp.ok) throw new Error(String(resp.status));
-    const data = await resp.json();
-    return (data?.summary as string) || "Made small timeline adjustments.";
+
+    if (!resp.ok || !resp.body) {
+      if (onDelta) onDelta(fallback);
+      return fallback;
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let accumulated = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith("data: ")) continue;
+
+        try {
+          const data = JSON.parse(trimmed.slice(6));
+          if (data.event === "summary_delta" && data.delta) {
+            accumulated += data.delta;
+            if (onDelta) onDelta(data.delta);
+          } else if (data.event === "summary_done") {
+            return accumulated || fallback;
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
+    }
+
+    return accumulated || fallback;
   } catch {
-    const fallback = bullets.length
-      ? `Completed edits: ${bullets.join("; ")}.`
-      : "Made small timeline adjustments.";
+    if (onDelta) onDelta(fallback);
     return fallback;
   }
 }
@@ -203,9 +267,20 @@ export function startAgentStream({
       }
     | {
         kind: "cut";
-        range: { mode: string; start?: number; end?: number; left?: number; right?: number };
+        range: {
+          mode: string;
+          start?: number;
+          end?: number;
+          left?: number;
+          right?: number;
+        };
         targetCount: number;
-        meta?: { source?: "twelvelabs"; query?: string };
+        meta?: {
+          source?: string;
+          searchQuery?: string;
+          searchSummary?: string;
+          searchWasQuoted?: boolean;
+        };
       }
     | { kind: "captions" }
     | { kind: "deadspace"; targetCount: number };
@@ -257,21 +332,41 @@ export function startAgentStream({
       if (result.success) {
         const resolved = (result as any).targetsResolved ?? 1;
         // Prefer pre-edit timeline range if provided by executor meta
-        if ((instruction as any).type === "twelvelabs.applyCut" && (result as any).meta?.timelineRange) {
-          const r = (result as any).meta.timelineRange as { start: number; end: number };
-          // prefer explicit query_text from planner if present; fallback to tlQuery
-          const query = (instruction as any).query_text || (result as any).meta?.tlQuery;
+        if (
+          (instruction as any).type === "twelvelabs.applyCut" &&
+          (result as any).meta?.timelineRange
+        ) {
+          const r = (result as any).meta.timelineRange as {
+            start: number;
+            end: number;
+          };
+          const tlInstruction = instruction as any;
+          const normalized = tlInstruction.queryNormalized;
+          const queryFromInstruction =
+            tlInstruction.query || tlInstruction.query_text;
+          const queryFromResult = (result as any).meta?.tlQuery;
+          const query = queryFromInstruction || queryFromResult || "";
+          const summaryQuery =
+            tlInstruction.summaryQuery ||
+            formatSearchQuery(normalized) ||
+            query;
           recordExecutedFromInstruction(
             {
               type: "twelvelabs.applyCut",
               start: r.start,
               end: r.end,
               query,
+              query_text: query,
+              summaryQuery,
+              queryNormalized: normalized,
             } as any,
             resolved
           );
         } else {
-          recordExecutedFromInstruction(instruction as AnyInstruction, resolved);
+          recordExecutedFromInstruction(
+            instruction as AnyInstruction,
+            resolved
+          );
         }
       }
     }

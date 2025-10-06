@@ -8,8 +8,7 @@ export const DEFAULT_TEXT_ELEMENT: Omit<TextElement, "id"> = {
   fontSize: 48,
   fontFamily: "Arial",
   color: "#ffffff",
-  // Use a solid, high-contrast background by default for better readability
-  backgroundColor: "#16a34a", // emerald-600
+  backgroundColor: "", // No background - transparent text overlay
   textAlign: "center",
   fontWeight: "normal",
   fontStyle: "normal",

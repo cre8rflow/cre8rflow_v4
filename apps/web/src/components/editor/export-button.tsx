@@ -52,7 +52,7 @@ export function ExportButton() {
         >
           <div className="flex items-center gap-1.5 rounded-[0.8rem] px-4 py-1 bg-primary hover:bg-primary/90 shadow-soft">
             <TransitionUpIcon />
-            <span className="text-[0.875rem] font-semibold" >Export</span>
+            <span className="text-[0.875rem] font-semibold">Export</span>
           </div>
         </button>
       </PopoverTrigger>

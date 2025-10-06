@@ -9,7 +9,11 @@ import type { AgentRequestPayload } from "@/types/agent";
 import { env } from "@/env";
 import { twelveLabsService } from "@/lib/twelvelabs-service";
 import { getMediaIndexJobs } from "@/lib/supabase";
-import { waitUntil } from "@/lib/agent-utils";
+import {
+  waitUntil,
+  normalizeSearchQuery,
+  formatSearchQuery,
+} from "@/lib/agent-utils";
 
 export const runtime = "nodejs";
 
@@ -213,16 +217,15 @@ export async function GET(request: NextRequest) {
 
             // Resolve TwelveLabs search steps server-side into applyCut
             const instructions: any[] = [];
-            // Helper to normalize phrases (remove surrounding quotes)
-            const stripQuotes = (s: string) =>
-              s?.trim().replace(/^['"“”‘’]+|['"“”‘’]+$/g, "");
 
             for (const instr of result.steps) {
               if (instr.type === "twelvelabs.search") {
-                const query = stripQuotes(instr.query);
+                const normalized = normalizeSearchQuery(instr.query);
+                const query = normalized.text || normalized.raw;
+                const summaryQuery = formatSearchQuery(normalized) || query;
                 safeSend({
                   event: "log",
-                  message: `Calling TwelveLabs for: ${query}`,
+                  message: `Calling TwelveLabs for: ${summaryQuery}`,
                 });
 
                 // Check indexing readiness using Supabase (projectId from metadata)
@@ -303,6 +306,8 @@ export async function GET(request: NextRequest) {
                     end: top.end,
                     query,
                     query_text: query, // explicit text for downstream summarization
+                    queryNormalized: normalized,
+                    summaryQuery,
                     description: `Cut out matched content (${top.start.toFixed(2)}–${top.end.toFixed(2)}s)`,
                   });
                 } catch (e: any) {

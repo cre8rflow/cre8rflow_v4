@@ -5,12 +5,7 @@ import { nanoid } from "nanoid";
 
 export type AgentRunStatus = "idle" | "running" | "completed" | "error";
 
-export type ChatRole =
-  | "user"
-  | "agent"
-  | "log"
-  | "thought"
-  | "system";
+export type ChatRole = "user" | "agent" | "log" | "thought" | "system";
 
 export type ChatMessage = {
   id: string;

@@ -1187,13 +1187,13 @@ function PreviewToolbar({
   }
 
   return (
-      <div
-        data-toolbar
-        className="flex items-center justify-between border border-border/40 bg-surface-base/70 px-4 py-3"
-      >
+    <div
+      data-toolbar
+      className="flex items-center justify-between border border-border/40 bg-surface-base/70 px-4 py-3"
+    >
       <div className="flex items-center gap-3">
-            <Button
-              variant="text"
+        <Button
+          variant="text"
           size="icon"
           onClick={toggle}
           disabled={!hasAnyElements}

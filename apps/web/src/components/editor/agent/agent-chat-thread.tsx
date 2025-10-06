@@ -37,13 +37,16 @@ export function AgentChatThread({ messages }: { messages: ChatMessage[] }) {
                 type="button"
                 aria-expanded="false"
                 className={cn(
-                  "inline-flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/5 px-3 py-1.5 text-[13px] text-primary-300",
+                  "inline-flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/5 px-3 py-1.5 text-[16px] text-primary-300",
                   "hover:bg-primary/10 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1"
                 )}
                 onClick={() => updateMessageById(m.id, { collapsed: false })}
                 title={m.title || "Thought"}
               >
-                <span className="i-lucide-chevron-down rotate-[-90deg]" aria-hidden />
+                <span
+                  className="i-lucide-chevron-down rotate-[-90deg]"
+                  aria-hidden
+                />
                 <span>{m.title || "Thought"}</span>
               </button>
             </div>
@@ -63,9 +66,9 @@ export function AgentChatThread({ messages }: { messages: ChatMessage[] }) {
                 "max-w-[88%] rounded-2xl border px-3.5 py-2.5 text-[16px] leading-6",
                 "whitespace-pre-wrap break-words",
                 isUser &&
-                  "border-primary/30 bg-primary/15 text-foreground shadow-soft",
+                  "border-primary/40 bg-primary text-foreground shadow-soft",
                 isAgent &&
-                  "border-border/30 bg-surface-elevated text-foreground shadow-soft/50",
+                  "border-border/30 bg-foreground/5 text-foreground shadow-soft/50",
                 isSystem &&
                   "rounded-xl border-border/30 bg-surface-elevated/70 text-muted-foreground text-[14px] leading-6",
                 isThought &&
@@ -81,7 +84,9 @@ export function AgentChatThread({ messages }: { messages: ChatMessage[] }) {
                     <button
                       type="button"
                       className="text-[12px] text-primary-300 hover:text-primary-200"
-                      onClick={() => updateMessageById(m.id, { collapsed: true })}
+                      onClick={() =>
+                        updateMessageById(m.id, { collapsed: true })
+                      }
                       aria-label="Collapse thought"
                     >
                       Hide
@@ -105,5 +110,3 @@ export function AgentChatThread({ messages }: { messages: ChatMessage[] }) {
     </div>
   );
 }
-
-

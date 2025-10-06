@@ -53,7 +53,7 @@ export function EditorSidebar() {
   };
 
   return (
-    <aside className="hidden lg:flex w-20 flex-col items-center border-r border-border/40 bg-surface-elevated/90 px-3 py-6 backdrop-blur">
+    <aside className="hidden lg:flex w-20 flex-col items-center border-r border-border/40 bg-gradient-to-b from-surface-elevated/95 via-primary/5 to-primary/10 px-3 py-6 backdrop-blur">
       <div className="flex flex-1 flex-col items-center gap-4">
         {sidebarItems.map(({ tab, label, icon: Icon }) => {
           const isActive = activeTab === tab && isMediaPanelOpen;

@@ -128,24 +128,40 @@ export function AgentPanel() {
         } else if (data.event === "done") {
           markComplete("Command processed successfully");
           // Insert a placeholder while summarizing
-          const placeholderId = addAgentMessage("Summarizing edits…");
-          // Summarize in parallel and then replace placeholder
+          const placeholderId = addAgentMessage("");
+          updateMessageById(placeholderId, { streaming: true });
+          // Summarize after all async tasks (e.g., captions) have completed
           (async () => {
             try {
+              const exec = await import("@/lib/agent-executor");
+              await exec.whenAsyncIdle();
+
               const mod = await import("@/lib/agent-client");
               const actions = mod.getAndClearExecutedActions();
-              const summary = await mod.summarizeExecutedActions(actions);
-              if (!actions.length) {
-                // If bullets were empty, keep the message minimal rather than asking the user.
+
+              let accumulated = "";
+              await mod.summarizeExecutedActions(actions, (delta) => {
+                accumulated += delta;
                 updateMessageById(placeholderId, {
-                  content: summary || "Completed edits.",
+                  content: accumulated,
+                  streaming: true,
+                });
+              });
+
+              if (!actions.length && !accumulated) {
+                updateMessageById(placeholderId, {
+                  content: "Completed edits.",
+                  streaming: false,
                 });
                 return;
               }
-              updateMessageById(placeholderId, { content: summary });
+
+              // Finalize streaming
+              updateMessageById(placeholderId, { streaming: false });
             } catch {
               updateMessageById(placeholderId, {
                 content: "Made timeline adjustments.",
+                streaming: false,
               });
             }
           })();
@@ -190,7 +206,7 @@ export function AgentPanel() {
   const statusMeta = useMemo(() => getStatusMeta(status), [status]);
 
   return (
-    <div className="flex h-full flex-col rounded-3xl border border-border/50 bg-surface-elevated/90 shadow-soft">
+      <div className="flex h-full flex-col rounded-3xl border border-border/50 bg-gradient-to-b from-surface-elevated/95 via-primary/5 to-primary/10 shadow-soft">
       <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl bg-quick-action shadow-soft">
@@ -204,8 +220,10 @@ export function AgentPanel() {
             />
           </div>
           <div>
-            <p className="text-sm font-semibold tracking-tight">Command Console</p>
-            <p className="text-[11px] text-muted-foreground leading-5">
+            <p className="text-lg font-semibold tracking-tight">
+              Kallio
+            </p>
+            <p className="text-[14px] text-muted-foreground leading-5">
               Describe edits you want. Kallio will handle it for you.
             </p>
           </div>
@@ -223,13 +241,13 @@ export function AgentPanel() {
 
       {!hasStarted && (
         <div className="px-4 pb-3">
-        <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-2 sm:grid-cols-2">
             {quickSuggestions.map((suggestion) => (
               <Button
                 key={suggestion.label}
                 type="button"
                 variant="secondary"
-              className="justify-between rounded-xl border border-border/40 bg-quick-action/50 px-3.5 py-3.5 text-left text-[16px] font-medium text-foreground shadow-soft transition hover:bg-quick-action"
+                className="justify-between rounded-xl border border-border/40 bg-quick-action/50 px-3.5 py-3.5 text-left text-[16px] font-medium text-foreground shadow-soft transition hover:bg-quick-action"
                 onClick={() => handleStart(suggestion.prompt)}
                 disabled={isRunning}
               >
@@ -308,7 +326,7 @@ export function AgentPanel() {
             <Button
               type="button"
               variant="primary"
-              size="sm"
+              size="lg"
               className="rounded-xl px-6"
               onClick={submitPrompt}
             >
@@ -319,7 +337,7 @@ export function AgentPanel() {
             <Button
               type="button"
               variant="text"
-              size="sm"
+              size="lg"
               className="ml-auto text-muted-foreground hover:text-foreground"
               onClick={handleNewSession}
               title="Start a new session"

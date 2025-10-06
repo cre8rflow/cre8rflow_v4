@@ -26,6 +26,16 @@ export type TargetSpec =
       track?: TrackFilter;
     };
 
+export interface SearchQueryMeta {
+  raw: string;
+  text: string;
+  wasQuoted: boolean;
+  quoteChars?: {
+    open: string;
+    close: string;
+  };
+}
+
 // =============================================================================
 // INSTRUCTION TYPES
 // =============================================================================
@@ -71,6 +81,10 @@ export interface TLApplyCutInstruction {
   start: number; // source video start in seconds
   end: number; // source video end in seconds
   description?: string;
+  query?: string;
+  query_text?: string;
+  summaryQuery?: string;
+  queryNormalized?: SearchQueryMeta;
 }
 
 // Non-edit server-side instructions

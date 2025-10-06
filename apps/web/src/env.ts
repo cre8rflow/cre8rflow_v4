@@ -39,10 +39,7 @@ export const env = createEnv({
       .optional()
       .default("true"),
     // Agent thinking/reasoning display
-    AGENT_THOUGHT_STRICT: z
-      .enum(["true", "false"])
-      .optional()
-      .default("false"),
+    AGENT_THOUGHT_STRICT: z.enum(["true", "false"]).optional().default("false"),
     AGENT_THINKING_TIMEOUT_MS: z.coerce.number().optional().default(3000),
   },
   client: {},

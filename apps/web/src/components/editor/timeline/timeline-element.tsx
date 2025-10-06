@@ -282,13 +282,17 @@ export function TimelineElement({
               element.type === "text"
                 ? "rounded-none bg-gradient-to-r from-green-700 to-green-500"
                 : "rounded-none bg-surface-elevated/90",
-              element.type === "text" ? undefined : getTrackElementClasses(track.type),
+              element.type === "text"
+                ? undefined
+                : getTrackElementClasses(track.type),
               isBeingDragged
                 ? "z-50 ring-1 ring-primary/60 shadow-soft"
                 : "z-10",
               isSelected
                 ? "ring-1 ring-primary/60 shadow-soft"
-                : element.type === "text" ? undefined : "hover:bg-surface-elevated",
+                : element.type === "text"
+                  ? undefined
+                  : "hover:bg-surface-elevated",
               element.hidden ? "opacity-50" : undefined
             )}
             onClick={(e) => onElementClick && onElementClick(e, element)}
