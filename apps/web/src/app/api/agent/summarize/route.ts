@@ -49,6 +49,45 @@ export async function POST(req: NextRequest) {
     const system =
       "You are a helpful video editing assistant. Speak in first-person as the editor. Summarize only what you actually did. If a TwelveLabs search query is present, begin with 'I first analyzed the video to find …' and blend the query text smoothly into that sentence. Use the query string exactly as provided: do not add quotation marks unless they already appear in the string, and never add extra words like 'phrase'. Example: query dogs playing -> 'I first analyzed the video to find dogs playing…'; query \"dogs playing\" -> 'I first analyzed the video to find \"dogs playing\"…'. Then describe concrete edits with timeline timestamps (e.g., 'I removed 12.37–21.07s'). For captions, say you added captions to match the spoken audio. No tool names, no steps, no speculation. Keep 1–2 concise sentences.";
 
+    const describeTrimSide = (side: any, position: "left" | "right"): string => {
+      if (!side) return "";
+
+      const label = position === "left" ? "left edge" : "right edge";
+
+      const secondsText = (value: number | undefined) =>
+        value !== undefined ? `${formatSeconds(value)}s` : undefined;
+
+      switch (side.mode) {
+        case "deltaSeconds":
+          return secondsText(side.delta)
+            ? `${label} by ${secondsText(side.delta)}`
+            : `${label} (${side.mode})`;
+        case "toSeconds":
+          return secondsText(side.time)
+            ? `${label} to ${secondsText(side.time)}`
+            : `${label} (${side.mode})`;
+        case "toPlayhead":
+          return `${label} to playhead`;
+        case "deltaFrames":
+          return typeof side.frames === "number"
+            ? `${label} by ${side.frames} frame${side.frames === 1 ? "" : "s"}`
+            : `${label} (${side.mode})`;
+        default: {
+          const extras = Object.entries(side)
+            .filter(([key]) => key !== "mode")
+            .map(([key, value]) => `${key}=${value}`)
+            .join(", ");
+          return extras ? `${label} (${side.mode}: ${extras})` : `${label} (${side.mode})`;
+        }
+      }
+    };
+
+    const formatSeconds = (value: number): string => {
+      if (!Number.isFinite(value)) return "0";
+      const scaled = Math.round(value * 100) / 100;
+      return Number.isInteger(scaled) ? `${Math.trunc(scaled)}` : `${scaled}`;
+    };
+
     const renderAction = (a: any): string => {
       if (a?.kind === "cut") {
         const s = Number(a?.range?.start ?? 0);
@@ -61,8 +100,17 @@ export async function POST(req: NextRequest) {
             : "";
         return `Cut: ${s.toFixed(2)}-${e.toFixed(2)}s${viaSearch}`;
       }
-      if (a?.kind === "trim")
-        return `Trim: sides=${JSON.stringify(a.sides)} count=${a.targetCount ?? 1}`;
+      if (a?.kind === "trim") {
+        const left = describeTrimSide(a?.sides?.left, "left");
+        const right = describeTrimSide(a?.sides?.right, "right");
+        const parts = [left, right].filter(Boolean).join(" & ");
+        const targetPhrase = `${a?.targetCount ?? 1} clip${
+          (a?.targetCount ?? 1) === 1 ? "" : "s"
+        }`;
+        return parts
+          ? `Trim: ${parts} on ${targetPhrase}`
+          : `Trim: adjusted ${targetPhrase}`;
+      }
       if (a?.kind === "captions") return "Captions: added";
       if (a?.kind === "deadspace")
         return `Deadspace: trimmed count=${a.targetCount ?? 1}`;

@@ -106,6 +106,7 @@ export function TimelineElement({
       progress: Math.max(0, Math.min(1, target.progress)),
       theme: command.theme,
       description: command.description,
+      effect: command.type,
     }));
   }, [commandStatuses]);
 
@@ -306,10 +307,34 @@ export function TimelineElement({
             </div>
 
             {commandFrames.map((frame) => {
+              const progress = frame.phase === "complete"
+                ? 1
+                : Math.max(0, Math.min(1, frame.progress));
               const styleVars = {
                 "--command-frame-color": frame.theme.color,
                 "--command-frame-fill": frame.theme.fill,
+                "--command-frame-highlight": frame.theme.highlight,
               } as CSSProperties;
+
+              const label = frame.theme?.label || frame.effect?.toUpperCase();
+              let statusText = "";
+              switch (frame.phase) {
+                case "preview":
+                  statusText = "Queued";
+                  break;
+                case "executing":
+                  statusText = `${Math.round(progress * 100)}%`;
+                  break;
+                case "complete":
+                  statusText = "Done";
+                  break;
+                case "error":
+                  statusText = "Error";
+                  break;
+                default:
+                  statusText = frame.phase;
+              }
+
               return (
                 <div
                   key={frame.id}
@@ -321,8 +346,22 @@ export function TimelineElement({
                 >
                   <div
                     className="timeline-command-frame__progress"
-                    style={{ width: `${frame.progress * 100}%` }}
+                    aria-hidden
+                    style={{ width: `${progress * 100}%` }}
                   />
+                  {label ? (
+                    <div className="timeline-command-frame__badge">
+                      {label}
+                    </div>
+                  ) : null}
+                  {statusText ? (
+                    <div className="timeline-command-frame__status" aria-live="polite">
+                      <span className="timeline-command-frame__status-dot" />
+                      <span className="timeline-command-frame__status-text">
+                        {statusText}
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
               );
             })}

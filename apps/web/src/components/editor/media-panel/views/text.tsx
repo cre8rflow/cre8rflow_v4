@@ -9,7 +9,7 @@ export function TextView() {
       <DraggableMediaItem
         name="Default text"
         preview={
-          <div className="flex items-center justify-center w-full h-full rounded bg-gradient-to-b from-surface-base via-primary/5 to-primary/10">
+          <div className="flex h-full w-full items-center justify-center rounded bg-surface-elevated/90">
             <span className="text-xs select-none">Default text</span>
           </div>
         }

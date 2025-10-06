@@ -36,10 +36,10 @@ export function ExportButton() {
         <button
           type="button"
           className={cn(
-            "flex items-center gap-1.5 bg-primary text-primary-foreground rounded-md px-[0.12rem] py-[0.12rem] transition-all duration-200",
+            "group flex items-center gap-2 rounded-xl bg-brand-gradient px-4 py-2 text-sm font-semibold text-white shadow-soft transition hover:shadow-medium",
             hasProject
-              ? "cursor-pointer hover:brightness-95"
-              : "cursor-not-allowed opacity-50"
+              ? "cursor-pointer"
+              : "cursor-not-allowed opacity-60"
           )}
           onClick={hasProject ? handleExport : undefined}
           disabled={!hasProject}
@@ -50,10 +50,8 @@ export function ExportButton() {
             }
           }}
         >
-          <div className="flex items-center gap-1.5 rounded-[0.8rem] px-4 py-1 bg-primary hover:bg-primary/90 shadow-soft">
-            <TransitionUpIcon />
-            <span className="text-[0.875rem] font-semibold">Export</span>
-          </div>
+          <TransitionUpIcon className="h-4 w-4" />
+          <span>Export</span>
         </button>
       </PopoverTrigger>
       {hasProject && <ExportPopover onOpenChange={setIsExportPopoverOpen} />}

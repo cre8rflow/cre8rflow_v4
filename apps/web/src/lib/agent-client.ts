@@ -13,6 +13,12 @@ import { env } from "@/env";
 import { useTimelineCommandStore } from "@/stores/timeline-command-store";
 import type { CommandEffect } from "@/stores/timeline-command-store";
 import { formatSearchQuery } from "@/lib/agent-utils";
+
+type TrimSideSpec = {
+  mode: string;
+  [key: string]: unknown;
+};
+
 const mapInstructionToEffect = (instructionType: string): CommandEffect => {
   switch (instructionType) {
     case "trim":
@@ -35,8 +41,9 @@ const mapInstructionToEffect = (instructionType: string): CommandEffect => {
 export type ExecutedAction =
   | {
       kind: "trim";
-      sides: { left?: string; right?: string };
+      sides: { left?: TrimSideSpec; right?: TrimSideSpec };
       targetCount: number;
+      meta?: { ripple?: boolean };
     }
   | {
       kind: "cut";
@@ -65,9 +72,18 @@ function recordExecutedFromInstruction(
   targetCount: number
 ): void {
   if (instruction.type === "trim") {
-    const left = instruction.sides?.left?.mode;
-    const right = instruction.sides?.right?.mode;
-    executedActions.push({ kind: "trim", sides: { left, right }, targetCount });
+    const left = instruction.sides?.left
+      ? JSON.parse(JSON.stringify(instruction.sides.left))
+      : undefined;
+    const right = instruction.sides?.right
+      ? JSON.parse(JSON.stringify(instruction.sides.right))
+      : undefined;
+    executedActions.push({
+      kind: "trim",
+      sides: { left, right },
+      targetCount,
+      meta: { ripple: instruction.options?.ripple === true },
+    });
   } else if (instruction.type === "cut-out") {
     const r = instruction.range as any;
     executedActions.push({
@@ -113,10 +129,14 @@ export async function summarizeExecutedActions(
   const bullets: string[] = [];
   for (const a of actions) {
     if (a.kind === "trim") {
+      const left = describeTrimSide(a.sides.left, "left");
+      const right = describeTrimSide(a.sides.right, "right");
+      const sideText = [left, right].filter(Boolean).join(" & ");
+      const targetPhrase = `${a.targetCount} clip${a.targetCount === 1 ? "" : "s"}`;
       bullets.push(
-        `Trim: ${a.sides.left ? `left(${a.sides.left})` : ""}${
-          a.sides.left && a.sides.right ? "/" : ""
-        }${a.sides.right ? `right(${a.sides.right})` : ""} on ${a.targetCount} clip(s)`
+        sideText
+          ? `Trimmed ${sideText} on ${targetPhrase}`
+          : `Trimmed ${targetPhrase}`
       );
     } else if (a.kind === "cut") {
       const r = a.range as any;
@@ -209,6 +229,61 @@ export function getAndClearExecutedActions(): ExecutedAction[] {
   return copy;
 }
 
+function describeTrimSide(
+  side: TrimSideSpec | undefined,
+  position: "left" | "right"
+): string {
+  if (!side) return "";
+
+  const labelPrefix = position === "left" ? "left edge" : "right edge";
+
+  const secondsText = (value: number | undefined) =>
+    value !== undefined ? `${formatSeconds(value)}s` : undefined;
+
+  switch (side.mode) {
+    case "deltaSeconds": {
+      const value = typeof side.delta === "number" ? side.delta : undefined;
+      if (value !== undefined) {
+        return `${labelPrefix} by ${secondsText(value)}`;
+      }
+      break;
+    }
+    case "toSeconds": {
+      const value = typeof side.time === "number" ? side.time : undefined;
+      if (value !== undefined) {
+        return `${labelPrefix} to ${secondsText(value)}`;
+      }
+      break;
+    }
+    case "toPlayhead":
+      return `${labelPrefix} to playhead`;
+    case "deltaFrames": {
+      const frames = typeof side.frames === "number" ? side.frames : undefined;
+      if (frames !== undefined) {
+        return `${labelPrefix} by ${frames} frame${frames === 1 ? "" : "s"}`;
+      }
+      break;
+    }
+    default:
+      break;
+  }
+
+  const extras = Object.entries(side)
+    .filter(([key]) => key !== "mode")
+    .map(([key, value]) => `${key}=${value}`)
+    .join(", ");
+
+  return extras
+    ? `${labelPrefix} (${side.mode}: ${extras})`
+    : `${labelPrefix} (${side.mode})`;
+}
+
+function formatSeconds(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  const scaled = Math.round(value * 100) / 100;
+  return Number.isInteger(scaled) ? `${Math.trunc(scaled)}` : `${scaled}`;
+}
+
 /**
  * Start an agent stream session with SSE
  * Opens EventSource connection, parses events, and executes instructions
@@ -258,34 +333,6 @@ export function startAgentStream({
   // ---------------------------------------------------------------------------
   // Executed actions aggregation for post-run summary
   // ---------------------------------------------------------------------------
-
-  type ExecutedAction =
-    | {
-        kind: "trim";
-        sides: { left?: string; right?: string };
-        targetCount: number;
-      }
-    | {
-        kind: "cut";
-        range: {
-          mode: string;
-          start?: number;
-          end?: number;
-          left?: number;
-          right?: number;
-        };
-        targetCount: number;
-        meta?: {
-          source?: string;
-          searchQuery?: string;
-          searchSummary?: string;
-          searchWasQuoted?: boolean;
-        };
-      }
-    | { kind: "captions" }
-    | { kind: "deadspace"; targetCount: number };
-
-  // (Removed duplicate inner definitions; top-level versions are exported)
 
   const processQueue = () => {
     if (isProcessing) return;

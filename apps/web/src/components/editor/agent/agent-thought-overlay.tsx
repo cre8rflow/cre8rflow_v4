@@ -24,7 +24,7 @@ export function AgentThoughtOverlay() {
       aria-live="polite"
       aria-atomic="true"
     >
-      <div className="rounded-xl border border-primary/30 bg-surface-elevated/90 px-4 py-3 text-sm text-foreground/85 shadow-lg backdrop-blur-sm">
+      <div className="rounded-xl border border-primary/30 bg-surface-elevated/90 px-4 py-3 italic text-[14px] text-foreground/85 shadow-lg backdrop-blur-sm">
         <div className="flex items-start gap-3">
           <div className="mt-0.5 h-2 w-2 animate-pulse rounded-full bg-primary" />
           <p className="flex-1 leading-relaxed">{text}</p>

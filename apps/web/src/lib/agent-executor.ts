@@ -129,7 +129,7 @@ export function executeInstruction({
   }
   // Handle server-side instructions
   if (isServerInstruction(instruction)) {
-    return executeServerInstruction({ instruction });
+    return executeServerInstruction({ instruction, context });
   }
 
   // Handle client-side agent instructions
@@ -150,12 +150,14 @@ export function executeInstruction({
  */
 function executeServerInstruction({
   instruction,
+  context,
 }: {
   instruction: Extract<AnyInstruction, { type: string }>;
+  context?: InstructionContext;
 }): ExecutionOutcome {
   // Handle server-only operations that are executed on the client
   if (instruction.type === "twelvelabs.applyCut") {
-    return executeTwelveLabsApplyCut(instruction as any);
+    return executeTwelveLabsApplyCut(instruction as any, context);
   }
 
   // For other server instructions, we just acknowledge
@@ -859,14 +861,17 @@ function detectSpeechWindow(
  * TwelveLabs provides timestamps in source video coordinates.
  * We need to find elements whose visible source range overlaps with the TwelveLabs range.
  */
-function executeTwelveLabsApplyCut(instruction: {
+function executeTwelveLabsApplyCut(
+  instruction: {
   type: "twelvelabs.applyCut";
   videoId: string;
   start: number;
   end: number;
   description?: string;
   query?: string;
-}): ExecutionOutcome {
+  },
+  context?: InstructionContext
+): ExecutionOutcome {
   const mediaFiles = useMediaStore.getState().mediaFiles;
   const timeline = useTimelineStore.getState();
 
@@ -942,6 +947,64 @@ function executeTwelveLabsApplyCut(instruction: {
       error: `TwelveLabs range ${instruction.start.toFixed(2)}-${instruction.end.toFixed(2)}s doesn't overlap with ${targetInfo}`,
       targetsResolved: 0,
     };
+  }
+
+  if (context?.commandId) {
+    const commandStore = useTimelineCommandStore.getState();
+    commandStore.registerTargets({
+      id: context.commandId,
+      type: "cut",
+      description: instruction.description,
+      targets: validTargets.map((target) => ({
+        trackId: target.trackId,
+        elementId: target.elementId,
+      })),
+    });
+  }
+
+  const highlightItems = validTargets
+    .map((target) => {
+      const localStart = instruction.start - target.trimStart;
+      const localEnd = instruction.end - target.trimStart;
+      const visibleDuration =
+        target.duration - target.trimStart - target.trimEnd;
+
+      const clampedStart = Math.max(0, localStart);
+      const clampedEnd = Math.min(visibleDuration, localEnd);
+
+      if (!(clampedEnd > clampedStart)) {
+        return null;
+      }
+
+      return {
+        target: {
+          trackId: target.trackId,
+          elementId: target.elementId,
+        },
+        range: {
+          mode: "timeline" as const,
+          start: target.startTime + clampedStart,
+          end: target.startTime + clampedEnd,
+        },
+      };
+    })
+    .filter(
+      (item): item is {
+        target: { trackId: string; elementId: string };
+        range: { mode: "timeline"; start: number; end: number };
+      } => item !== null
+    );
+
+  if (highlightItems.length) {
+    emitCutHighlights({
+      items: highlightItems,
+      includeAttachments: false,
+      ttl: 3600,
+      meta: {
+        source: "twelvelabs.applyCut",
+        phase: "executing",
+      },
+    });
   }
 
   // Single history entry for whole operation

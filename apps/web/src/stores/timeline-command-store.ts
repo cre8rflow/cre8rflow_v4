@@ -35,6 +35,8 @@ interface CommandEntry {
   theme: {
     color: string;
     fill: string;
+    highlight: string;
+    label: string;
   };
 }
 
@@ -100,31 +102,43 @@ const mapCommandEffectToTheme = (effect: CommandEffect) => {
       return {
         color: "var(--command-trim-color)",
         fill: "var(--command-trim-fill)",
+        highlight: "var(--command-trim-highlight)",
+        label: "TRIM",
       };
     case "cut":
       return {
         color: "var(--command-cut-color)",
         fill: "var(--command-cut-fill)",
+        highlight: "var(--command-cut-highlight)",
+        label: "CUT",
       };
     case "caption":
       return {
         color: "var(--command-caption-color)",
         fill: "var(--command-caption-fill)",
+        highlight: "var(--command-caption-highlight)",
+        label: "CAPTIONS",
       };
     case "deadspace":
       return {
         color: "var(--command-deadspace-color)",
         fill: "var(--command-deadspace-fill)",
+        highlight: "var(--command-deadspace-highlight)",
+        label: "DEADSPACE",
       };
     case "analysis":
       return {
         color: "var(--command-generic-color)",
         fill: "var(--command-generic-fill)",
+        highlight: "var(--command-generic-highlight)",
+        label: "ANALYZING",
       };
     default:
       return {
         color: "var(--command-generic-color)",
         fill: "var(--command-generic-fill)",
+        highlight: "var(--command-generic-highlight)",
+        label: "PROCESSING",
       };
   }
 };
@@ -145,6 +159,11 @@ export const useTimelineCommandStore = create<TimelineCommandState>()(
       const now = Date.now();
       set((state) => {
         const existing = state.commands[commandId];
+        const resolvedEffect = existing?.type || type;
+        const baseTheme = mapCommandEffectToTheme(resolvedEffect);
+        const resolvedTheme = existing?.theme
+          ? { ...baseTheme, ...existing.theme }
+          : baseTheme;
         const entry: CommandEntry = existing
           ? {
               ...existing,
@@ -154,9 +173,7 @@ export const useTimelineCommandStore = create<TimelineCommandState>()(
               currentStep: currentStep ?? existing.currentStep,
               phase: phase ?? existing.phase,
               updatedAt: now,
-              theme:
-                existing.theme ??
-                mapCommandEffectToTheme(existing.type || type),
+              theme: resolvedTheme,
             }
           : {
               id: commandId,
@@ -169,7 +186,7 @@ export const useTimelineCommandStore = create<TimelineCommandState>()(
               targets: {},
               createdAt: now,
               updatedAt: now,
-              theme: mapCommandEffectToTheme(type),
+              theme: baseTheme,
             };
         return {
           commands: {

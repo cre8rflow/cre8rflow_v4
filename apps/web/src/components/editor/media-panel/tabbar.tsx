@@ -97,8 +97,8 @@ function FadeOverlay({
       className={cn(
         "absolute left-0 right-0 h-6 pointer-events-none z-[101] transition-opacity duration-200",
         direction === "top" && show
-          ? "top-0 bg-gradient-to-b from-panel to-transparent"
-          : "bottom-0 bg-gradient-to-t from-panel to-transparent"
+          ? "top-0 bg-surface-base/80"
+          : "bottom-0 bg-surface-base/80"
       )}
     />
   );

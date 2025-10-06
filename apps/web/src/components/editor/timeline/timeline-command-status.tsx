@@ -1,77 +1,146 @@
 "use client";
 
+import { Loader2 } from "lucide-react";
 import { useMemo } from "react";
-import { useActiveTimelineCommands } from "@/stores/timeline-command-store";
-import { cn } from "@/lib/utils";
+import {
+  useActiveTimelineCommands,
+  type CommandEntry,
+} from "@/stores/timeline-command-store";
 
-export function TimelineCommandStatusBar() {
-  const active = useActiveTimelineCommands();
-  const currentCommand = useMemo(() => {
-    if (!active.length) return null;
-    // Prefer commands still executing; fall back to the first in list
-    return active.find((command) => command.phase === "executing") ?? active[0];
-  }, [active]);
+interface TimelineCommandStatusBarProps {
+  commands?: CommandEntry[];
+}
 
-  if (!currentCommand) {
+function summarizeCommands(commands: CommandEntry[]) {
+  if (!commands.length) return null;
+
+  const primary =
+    commands.find((command) => command.phase === "executing") ?? commands[0];
+
+  const totals = commands.reduce(
+    (acc, command) => {
+      const hasSteps = command.totalSteps && command.totalSteps > 0;
+      const capacity = hasSteps ? command.totalSteps : 1;
+      const completed = hasSteps
+        ? Math.min(command.currentStep, command.totalSteps)
+        : Math.max(0, Math.min(1, command.progress));
+
+      acc.capacity += capacity;
+      acc.completed += completed;
+
+      const sample = hasSteps
+        ? command.totalSteps > 0
+          ? Math.max(0, Math.min(1, command.currentStep / command.totalSteps))
+          : 0
+        : Math.max(0, Math.min(1, command.progress));
+
+      acc.progressSamples.push(sample);
+      acc.activeCount += 1;
+      return acc;
+    },
+    {
+      capacity: 0,
+      completed: 0,
+      progressSamples: [] as number[],
+      activeCount: 0,
+    }
+  );
+
+  const aggregateProgress = totals.capacity
+    ? Math.max(0, Math.min(1, totals.completed / totals.capacity))
+    : totals.progressSamples.length
+      ? totals.progressSamples.reduce((sum, value) => sum + value, 0) /
+        totals.progressSamples.length
+      : 0;
+
+  const completedOps = totals.capacity
+    ? Math.min(totals.capacity, Math.round(totals.completed))
+    : Math.round(aggregateProgress * totals.activeCount);
+  const totalOps = totals.capacity || totals.activeCount || 1;
+
+  return {
+    primary,
+    aggregateProgress,
+    completedOps,
+    totalOps,
+  };
+}
+
+export function TimelineCommandStatusBar({
+  commands,
+}: TimelineCommandStatusBarProps) {
+  const active = commands ?? useActiveTimelineCommands();
+
+  const summary = useMemo(() => summarizeCommands(active), [active]);
+
+  if (!summary) {
     return null;
   }
 
-  const { description, progress, currentStep, totalSteps, type, phase, theme } =
-    currentCommand;
+  const { primary, aggregateProgress, completedOps, totalOps } = summary;
+  const percent = Math.max(0, Math.min(1, aggregateProgress));
+  const roundedPercent = Math.round(percent * 100);
 
-  const clampedProgress = Math.max(0, Math.min(1, progress));
-  const label =
-    description ||
-    (type === "trim"
-      ? "Applying trims"
-      : type === "cut"
-        ? "Cutting clips"
-        : type === "caption"
-          ? "Generating captions"
-          : "Processing timeline");
+  const effectLabel = primary.theme?.label ?? "PROCESSING";
+  const detailText =
+    primary.description ||
+    (effectLabel
+      ? `Applying ${effectLabel.toLowerCase()} edits`
+      : "Applying timeline changes");
+
+  const operationsLabel = `${Math.min(
+    completedOps,
+    totalOps
+  )} of ${totalOps} operation${totalOps === 1 ? "" : "s"}`;
 
   return (
-    <div className="pointer-events-none absolute left-4 right-4 top-2 z-[60] flex flex-col gap-1 text-xs">
+    <div className="timeline-processing-overlay">
       <div
-        className="flex items-center justify-between rounded-xl border bg-surface-elevated/95 px-3 py-2 shadow-lg/40"
+        className="timeline-processing-card"
         style={{
-          borderColor: theme.color,
-          boxShadow: `0 0 0 1px color-mix(in srgb, ${theme.color} 20%, transparent), 0 10px 35px -20px color-mix(in srgb, ${theme.color} 35%, transparent)`,
+          // Provide CSS variables for accent/highlight usage
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-ignore CSS custom property typing
+          "--command-frame-color": primary.theme.color,
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-ignore CSS custom property typing
+          "--command-frame-highlight": primary.theme.highlight,
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-ignore CSS custom property typing
+          "--command-frame-fill": primary.theme.fill,
         }}
       >
-        <div className="flex flex-col">
-          <span className="font-medium text-foreground/90">{label}</span>
-          <span className="text-foreground/60 text-[11px]">
-            {phase === "complete"
-              ? "Completed"
-              : phase === "error"
-                ? "Encountered an error"
-                : totalSteps > 0
-                  ? `Step ${Math.min(currentStep, totalSteps)} of ${totalSteps}`
-                  : "Working"}
+        <div className="timeline-processing-card__header">
+          <Loader2 className="timeline-processing-spinner animate-spin" />
+          <div className="timeline-processing-card__titles">
+            <span className="timeline-processing-card__title">
+              Processing Timeline
+            </span>
+            <span className="timeline-processing-card__subtitle">
+              {detailText}
+            </span>
+          </div>
+        </div>
+        <span className="timeline-processing-label">{effectLabel}</span>
+        <div className="timeline-processing-progress" aria-hidden>
+          <div
+            className="timeline-processing-progress__bar"
+            style={{ width: `${percent * 100}%` }}
+          />
+        </div>
+        <div className="timeline-processing-meta">
+          <div className="timeline-processing-meta__operations">
+            <span className="timeline-processing-meta__primary">
+              {operationsLabel}
+            </span>
+            <span className="timeline-processing-meta__secondary">
+              {active.length} active task{active.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          <span className="timeline-processing-meta__primary">
+            {roundedPercent}%
           </span>
         </div>
-        <span className="text-foreground/70 text-[11px]">
-          {Math.round(clampedProgress * 100)}%
-        </span>
-      </div>
-      <div
-        className="relative h-[5px] rounded-full overflow-hidden"
-        style={{ background: theme.fill }}
-      >
-        <div
-          className={cn(
-            "absolute inset-y-0 left-0 rounded-full transition-all",
-            phase === "error" ? "bg-destructive" : undefined
-          )}
-          style={{
-            width: `${clampedProgress * 100}%`,
-            background:
-              phase === "error"
-                ? undefined
-                : `linear-gradient(90deg, ${theme.color}, rgba(255,255,255,0.65))`,
-          }}
-        />
       </div>
     </div>
   );

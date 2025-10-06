@@ -14,32 +14,30 @@ import {
   Pause,
   Play,
   SkipBack,
-  Bookmark,
-  Magnet,
-  Link,
+  // Bookmark,
+  // Magnet,
+  // Link,
   ZoomOut,
   ZoomIn,
   Copy,
   Trash2,
-  Snowflake,
-  ArrowLeftToLine,
-  ArrowRightToLine,
-  SplitSquareHorizontal,
-  Scissors,
-  LayersIcon,
+  ScissorsSquare,
+  ArrowLeftCircle,
+  ArrowRightCircle,
+  Volume2,
 } from "lucide-react";
-import {
-  SplitButton,
-  SplitButtonLeft,
-  SplitButtonRight,
-  SplitButtonSeparator,
-} from "@/components/ui/split-button";
+// import {
+//   SplitButton,
+//   SplitButtonLeft,
+//   SplitButtonRight,
+//   SplitButtonSeparator,
+// } from "@/components/ui/split-button";
 import { Slider } from "@/components/ui/slider";
 import { DEFAULT_FPS } from "@/stores/project-store";
 import { formatTimeCode } from "@/lib/time";
 import { TIMELINE_CONSTANTS } from "@/constants/timeline-constants";
 import { EditableTimecode } from "@/components/ui/editable-timecode";
-import { ScenesView } from "../scenes-view";
+// import { ScenesView } from "../scenes-view";
 
 export function TimelineToolbar({
   zoomLevel,
@@ -60,13 +58,13 @@ export function TimelineToolbar({
     splitAndKeepRight,
     separateAudio,
     snappingEnabled,
-    toggleSnapping,
-    rippleEditingEnabled,
-    toggleRippleEditing,
+    // toggleSnapping,
+    // rippleEditingEnabled,
+    // toggleRippleEditing,
   } = useTimelineStore();
   const { currentTime, duration, isPlaying, toggle, seek } = usePlaybackStore();
-  const { toggleBookmark, isBookmarked, activeProject } = useProjectStore();
-  const { scenes, currentScene } = useSceneStore();
+  const { /* toggleBookmark, isBookmarked, */ activeProject } = useProjectStore();
+  // const { scenes, currentScene } = useSceneStore();
 
   const handleSplitSelected = () => {
     splitSelected(currentTime);
@@ -93,10 +91,6 @@ export function TimelineToolbar({
       }
     });
     clearSelectedElements();
-  };
-
-  const handleFreezeSelected = () => {
-    toast.info("Freeze frame functionality coming soon!");
   };
 
   const handleSplitAndKeepLeft = () => {
@@ -169,22 +163,31 @@ export function TimelineToolbar({
     setZoomLevel(values[0]);
   };
 
-  const handleToggleBookmark = async () => {
-    await toggleBookmark(currentTime);
-  };
+  // const handleFreezeSelected = () => {
+  //   toast.info("Freeze frame functionality coming soon!");
+  // };
 
-  const currentBookmarked = isBookmarked(currentTime);
+  // const handleToggleBookmark = async () => {
+  //   await toggleBookmark(currentTime);
+  // };
+
+  // const currentBookmarked = isBookmarked(currentTime);
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border/40 bg-surface-base/70 px-3 py-2 shadow-soft">
-      <div className="flex items-center gap-1">
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/40 bg-surface-base/70 px-4 py-2.5 shadow-soft">
+      <div className="flex items-center gap-2">
         <TooltipProvider delayDuration={500}>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="text" size="icon" onClick={toggle}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-xl border border-transparent hover:border-border/40"
+                onClick={toggle}
+              >
                 {isPlaying ? (
-                  <Pause className="h-4 w-4" />
+                  <Pause className="h-[1.05rem] w-[1.05rem]" />
                 ) : (
-                  <Play className="h-4 w-4" />
+                  <Play className="h-[1.05rem] w-[1.05rem]" />
                 )}
               </Button>
             </TooltipTrigger>
@@ -194,27 +197,32 @@ export function TimelineToolbar({
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="text" size="icon" onClick={() => seek(0)}>
-                <SkipBack className="h-4 w-4" />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-xl border border-transparent hover:border-border/40"
+                onClick={() => seek(0)}
+              >
+                <SkipBack className="h-[1.05rem] w-[1.05rem]" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Return to Start (Home / Enter)</TooltipContent>
           </Tooltip>
-          <div className="w-px h-6 bg-border mx-1" />
+          <div className="mx-2 h-6 w-px bg-border/50" />
           {/* Time Display */}
-          <div className="flex flex-row items-center justify-center px-2">
+          <div className="flex flex-row items-center justify-center rounded-xl bg-surface-elevated/60 px-3 py-1.5 shadow-soft">
             <EditableTimecode
               time={currentTime}
               duration={duration}
               format="HH:MM:SS:FF"
               fps={activeProject?.fps ?? DEFAULT_FPS}
               onTimeChange={seek}
-              className="text-center"
+              className="text-center text-sm"
             />
-            <div className="text-xs text-muted-foreground font-mono px-2">
+            <div className="px-2 text-xs font-mono text-muted-foreground/80">
               /
             </div>
-            <div className="text-xs text-muted-foreground font-mono text-center">
+            <div className="text-xs font-mono text-muted-foreground/80 text-center">
               {formatTimeCode(duration, "HH:MM:SS:FF")}
             </div>
           </div>
@@ -250,8 +258,13 @@ export function TimelineToolbar({
           <div className="w-px h-6 bg-border mx-1" />
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="text" size="icon" onClick={handleSplitSelected}>
-                <Scissors className="h-4 w-4" />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-xl border border-transparent hover:border-border/40"
+                onClick={handleSplitSelected}
+              >
+                <ScissorsSquare className="h-[1.05rem] w-[1.05rem]" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Split element (Ctrl+S)</TooltipContent>
@@ -259,11 +272,12 @@ export function TimelineToolbar({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant="text"
+                variant="ghost"
                 size="icon"
+                className="h-8 w-8 rounded-xl border border-transparent hover:border-border/40"
                 onClick={handleSplitAndKeepLeft}
               >
-                <ArrowLeftToLine className="h-4 w-4" />
+                <ArrowLeftCircle className="h-[1.05rem] w-[1.05rem]" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Split and keep left (Ctrl+Q)</TooltipContent>
@@ -271,67 +285,71 @@ export function TimelineToolbar({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant="text"
+                variant="ghost"
                 size="icon"
+                className="h-8 w-8 rounded-xl border border-transparent hover:border-border/40"
                 onClick={handleSplitAndKeepRight}
               >
-                <ArrowRightToLine className="h-4 w-4" />
+                <ArrowRightCircle className="h-[1.05rem] w-[1.05rem]" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Split and keep right (Ctrl+W)</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="text" size="icon" onClick={handleSeparateAudio}>
-                <SplitSquareHorizontal className="h-4 w-4" />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-xl border border-transparent hover:border-border/40"
+                onClick={handleSeparateAudio}
+              >
+                <Volume2 className="h-[1.05rem] w-[1.05rem]" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Separate audio (Ctrl+D)</TooltipContent>
+            <TooltipContent>Separate audio (Ctrl+Shift+A)</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant="text"
+                variant="ghost"
                 size="icon"
+                className="h-8 w-8 rounded-xl border border-transparent hover:border-border/40"
                 onClick={handleDuplicateSelected}
               >
-                <Copy className="h-4 w-4" />
+                <Copy className="h-[1.05rem] w-[1.05rem]" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Duplicate element (Ctrl+D)</TooltipContent>
           </Tooltip>
-          <Tooltip>
+          {/* <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="text" size="icon" onClick={handleFreezeSelected}>
-                <Snowflake className="h-4 w-4" />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-xl border border-transparent hover:border-border/40"
+                onClick={handleFreezeSelected}
+              >
+                <Snowflake className="h-[1.05rem] w-[1.05rem]" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Freeze frame (F)</TooltipContent>
-          </Tooltip>
+          </Tooltip> */}
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="text" size="icon" onClick={handleDeleteSelected}>
-                <Trash2 className="h-4 w-4" />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-xl border border-transparent hover:border-border/40"
+                onClick={handleDeleteSelected}
+              >
+                <Trash2 className="h-[1.05rem] w-[1.05rem]" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Delete element (Delete)</TooltipContent>
           </Tooltip>
-          <div className="w-px h-6 bg-border mx-1" />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="text" size="icon" onClick={handleToggleBookmark}>
-                <Bookmark
-                  className={`h-4 w-4 ${currentBookmarked ? "fill-primary text-primary" : ""}`}
-                />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {currentBookmarked ? "Remove bookmark" : "Add bookmark"}
-            </TooltipContent>
-          </Tooltip>
         </TooltipProvider>
       </div>
-      <div>
+      {/* <div>
         <SplitButton className="border border-foreground/10">
           <SplitButtonLeft>{currentScene?.name || "No Scene"}</SplitButtonLeft>
           <SplitButtonSeparator />
@@ -341,16 +359,16 @@ export function TimelineToolbar({
             </SplitButtonRight>
           </ScenesView>
         </SplitButton>
-      </div>
-      <div className="flex items-center gap-1">
+      </div> */}
+      <div className="flex items-center gap-2">
         <TooltipProvider delayDuration={500}>
-          <Tooltip>
+          {/* <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="text" size="icon" onClick={toggleSnapping}>
+              <Button variant="ghost" size="icon" onClick={toggleSnapping}>
                 {snappingEnabled ? (
-                  <Magnet className="h-4 w-4 text-primary" />
+                  <Magnet className="h-[1.05rem] w-[1.05rem] text-primary" />
                 ) : (
-                  <Magnet className="h-4 w-4" />
+                  <Magnet className="h-[1.05rem] w-[1.05rem]" />
                 )}
               </Button>
             </TooltipTrigger>
@@ -358,9 +376,9 @@ export function TimelineToolbar({
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="text" size="icon" onClick={toggleRippleEditing}>
+              <Button variant="ghost" size="icon" onClick={toggleRippleEditing}>
                 <Link
-                  className={`h-4 w-4 ${
+                  className={`h-[1.05rem] w-[1.05rem] ${
                     rippleEditingEnabled ? "text-primary" : ""
                   }`}
                 />
@@ -372,12 +390,34 @@ export function TimelineToolbar({
                 : "Enable Ripple Editing"}
             </TooltipContent>
           </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-xl border border-transparent hover:border-border/40"
+                onClick={handleToggleBookmark}
+              >
+                <Bookmark
+                  className={`h-[1.05rem] w-[1.05rem] ${currentBookmarked ? "fill-primary text-primary" : ""}`}
+                />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {currentBookmarked ? "Remove bookmark" : "Add bookmark"}
+            </TooltipContent>
+          </Tooltip> */}
         </TooltipProvider>
 
         <div className="h-6 w-px bg-border mx-1" />
-        <div className="flex items-center gap-1">
-          <Button variant="text" size="icon" onClick={handleZoomOut}>
-            <ZoomOut className="h-4 w-4" />
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-xl border border-transparent hover:border-border/40"
+            onClick={handleZoomOut}
+          >
+            <ZoomOut className="h-[1.05rem] w-[1.05rem]" />
           </Button>
           <Slider
             className="w-24"
@@ -387,8 +427,13 @@ export function TimelineToolbar({
             max={4}
             step={0.25}
           />
-          <Button variant="text" size="icon" onClick={handleZoomIn}>
-            <ZoomIn className="h-4 w-4" />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-xl border border-transparent hover:border-border/40"
+            onClick={handleZoomIn}
+          >
+            <ZoomIn className="h-[1.05rem] w-[1.05rem]" />
           </Button>
         </div>
       </div>

@@ -15,6 +15,7 @@ export type ChatMessage = {
   streaming?: boolean;
   collapsed?: boolean;
   title?: string;
+  autoCollapsed?: boolean;
 };
 
 type AgentUIState = {

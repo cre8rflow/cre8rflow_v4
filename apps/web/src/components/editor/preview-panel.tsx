@@ -758,7 +758,7 @@ export function PreviewPanel() {
 
   return (
     <>
-      <div className="flex h-full flex-col bg-gradient-to-b from-surface-elevated/95 via-primary/5 to-primary/10 shadow-soft overflow-hidden">
+      <div className="flex h-full flex-col bg-panel-surface shadow-soft overflow-hidden">
         <div ref={containerRef} className="flex flex-1 min-h-0 flex-col">
           <div className="flex flex-1 items-center justify-center">
             {shouldRenderPreview ? (

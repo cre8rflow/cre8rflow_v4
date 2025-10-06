@@ -11,8 +11,16 @@ import {
   Loader2,
   CheckCircle2,
   AlertTriangle,
-  Sparkles,
   ArrowUpRight,
+  Scissors,
+  Music2,
+  Palette,
+  Captions,
+  Clapperboard,
+  StretchVertical,
+  Wand2,
+  ArrowUp,
+  type LucideIcon,
 } from "lucide-react";
 
 import { useAgentOrchestrator } from "@/hooks/use-agent-orchestrator";
@@ -22,20 +30,46 @@ import {
   type ChatMessage,
 } from "@/stores/agent-ui-store";
 
-const quickSuggestions: { label: string; prompt: string }[] = [
-  { label: "Auto-Cut Silence", prompt: "auto-cut silence across the timeline" },
+const quickSuggestions: {
+  label: string;
+  prompt: string;
+  icon: LucideIcon;
+}[] = [
+  {
+    label: "Auto-Cut Silence",
+    prompt: "auto-cut silence across the timeline",
+    icon: Scissors,
+  },
   {
     label: "Highlight Reel",
     prompt: "create a highlight reel of the best moments",
+    icon: Wand2,
   },
-  { label: "Add Subtitles", prompt: "generate subtitles for the video" },
-  { label: "Color Grade", prompt: "apply cinematic color grading" },
-  { label: "Sync to Music", prompt: "sync cuts to the beat of the music" },
+  {
+    label: "Add Subtitles",
+    prompt: "generate subtitles for the video",
+    icon: Captions,
+  },
+  {
+    label: "Color Grade",
+    prompt: "apply cinematic color grading",
+    icon: Palette,
+  },
+  {
+    label: "Sync to Music",
+    prompt: "sync cuts to the beat of the music",
+    icon: Music2,
+  },
   {
     label: "Cinematic Look",
     prompt: "apply cinematic look and stabilize footage",
+    icon: Clapperboard,
   },
-  { label: "Vertical Crop", prompt: "vertical crop for 9:16 short" },
+  {
+    label: "Vertical Crop",
+    prompt: "vertical crop for 9:16 short",
+    icon: StretchVertical,
+  },
 ];
 
 export function AgentPanel() {
@@ -70,6 +104,7 @@ export function AgentPanel() {
   const endRef = useRef<HTMLDivElement | null>(null);
 
   const isRunning = status === "running";
+  const isPromptEmpty = prompt.trim().length === 0;
 
   useEffect(() => {
     return () => {
@@ -206,10 +241,10 @@ export function AgentPanel() {
   const statusMeta = useMemo(() => getStatusMeta(status), [status]);
 
   return (
-      <div className="flex h-full flex-col rounded-3xl border border-border/50 bg-gradient-to-b from-surface-elevated/95 via-primary/5 to-primary/10 shadow-soft">
+      <div className="flex h-full flex-col rounded-3xl border border-border/40 bg-panel-surface shadow-soft">
       <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl bg-quick-action shadow-soft">
+          <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl bg-brand-gradient shadow-soft">
             <Image
               src="/kallio_white_outline.png"
               alt="Kallio"
@@ -242,18 +277,27 @@ export function AgentPanel() {
       {!hasStarted && (
         <div className="px-4 pb-3">
           <div className="grid gap-2 sm:grid-cols-2">
-            {quickSuggestions.map((suggestion) => (
-              <Button
-                key={suggestion.label}
+            {quickSuggestions.map(({ label, prompt, icon: Icon }) => (
+              <button
+                key={label}
                 type="button"
-                variant="secondary"
-                className="justify-between rounded-xl border border-border/40 bg-quick-action/50 px-3.5 py-3.5 text-left text-[16px] font-medium text-foreground shadow-soft transition hover:bg-quick-action"
-                onClick={() => handleStart(suggestion.prompt)}
+                className={cn(
+                  "group relative overflow-hidden rounded-2xl border border-border/35 bg-surface-elevated/90 text-left shadow-soft transition",
+                  "hover:border-border/20 hover:bg-surface-elevated/95 disabled:cursor-not-allowed disabled:opacity-60"
+                )}
+                onClick={() => handleStart(prompt)}
                 disabled={isRunning}
               >
-                <span>{suggestion.label}</span>
-                <Sparkles className="h-4 w-4 opacity-80" />
-              </Button>
+                <div className="flex w-full items-center justify-between gap-3 rounded-[calc(var(--radius)*1.1)] bg-surface-elevated/95 px-4 py-3 transition group-hover:bg-surface-elevated/85">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-gradient text-white shadow-soft">
+                    <Icon className="h-5 w-5" />
+                  </span>
+                  <span className="flex-1 text-[15px] font-semibold text-foreground">
+                    {label}
+                  </span>
+                  <ArrowUpRight className="h-4 w-4 text-foreground/70 transition group-hover:text-white" />
+                </div>
+              </button>
             ))}
           </div>
         </div>
@@ -296,21 +340,35 @@ export function AgentPanel() {
 
       <div className="border-t border-border/40 px-4 py-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <div className="relative flex-1">
-            <Input
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Tell Kallio what to do…"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  submitPrompt();
-                }
-              }}
-              disabled={isRunning}
-              className="h-11 rounded-xl bg-surface-base/70 text-[16px]"
-            />
-            <ArrowUpRight className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <div className="flex flex-1 items-center gap-2">
+            <div className="relative flex-1 group">
+              <span className="pointer-events-none absolute inset-0 rounded-2xl border-5 border-border/50 transition-colors duration-200 group-hover:border-primary/60 group-focus-within:border-primary" />
+              <Input
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="Tell Kallio what to do…"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    submitPrompt();
+                  }
+                }}
+                disabled={isRunning}
+                className="relative h-11 rounded-2xl border-0 bg-surface-base/95 px-4 text-[16px] shadow-none focus-visible:border-0 focus-visible:ring-0 focus-visible:outline-hidden"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={submitPrompt}
+              disabled={isRunning || isPromptEmpty}
+              className={cn(
+                "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-gradient text-white shadow-soft transition hover:shadow-medium",
+                (isRunning || isPromptEmpty) && "opacity-40 cursor-not-allowed"
+              )}
+            >
+              <ArrowUp className="h-4 w-4" />
+              <span className="sr-only">Send command</span>
+            </button>
           </div>
           {isRunning ? (
             <Button
@@ -323,15 +381,7 @@ export function AgentPanel() {
               Stop
             </Button>
           ) : (
-            <Button
-              type="button"
-              variant="primary"
-              size="lg"
-              className="rounded-xl px-6"
-              onClick={submitPrompt}
-            >
-              Send
-            </Button>
+            <></>
           )}
           {!isRunning && hasStarted && (
             <Button

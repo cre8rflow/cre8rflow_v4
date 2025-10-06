@@ -148,7 +148,7 @@ function CollectionGrid({
 
 function EmptyView({ message }: { message: string }) {
   return (
-    <div className="bg-panel h-full p-4 flex flex-col items-center justify-center gap-3">
+    <div className="bg-panel-surface h-full p-4 flex flex-col items-center justify-center gap-3">
       <StickerIcon
         className="w-10 h-10 text-muted-foreground"
         strokeWidth={1.5}

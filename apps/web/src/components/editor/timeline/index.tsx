@@ -72,6 +72,8 @@ import { formatTimeCode } from "@/lib/time";
 import { EditableTimecode } from "@/components/ui/editable-timecode";
 import { TimelineToolbar } from "./timeline-toolbar";
 import { TimelineCommandStatusBar } from "./timeline-command-status";
+import { useActiveTimelineCommands } from "@/stores/timeline-command-store";
+import { cn } from "@/lib/utils";
 
 export function Timeline() {
   // Timeline shows all tracks (video, audio, effects) and their elements.
@@ -97,6 +99,9 @@ export function Timeline() {
   const timelineRef = useRef<HTMLDivElement>(null);
   const rulerRef = useRef<HTMLDivElement>(null);
   const [isInTimeline, setIsInTimeline] = useState(false);
+
+  const activeCommands = useActiveTimelineCommands();
+  const isTimelineProcessing = activeCommands.length > 0;
 
   // Track mouse down/up for distinguishing clicks from drag/resize ends
   const mouseTrackingRef = useRef({
@@ -619,7 +624,7 @@ export function Timeline() {
   }, []);
 
   return (
-    <div className="flex h-full flex-col gap-3 rounded-3xl border border-border/40 bg-gradient-to-b from-surface-elevated/95 via-primary/5 to-primary/10 p-4 shadow-soft">
+    <div className="flex h-full flex-col gap-3 rounded-3xl border border-border/40 bg-surface-base p-4 shadow-soft">
       <TimelineToolbar zoomLevel={zoomLevel} setZoomLevel={setZoomLevel} />
 
       <div
@@ -628,14 +633,18 @@ export function Timeline() {
         onMouseEnter={() => setIsInTimeline(true)}
         onMouseLeave={() => setIsInTimeline(false)}
       >
-        <TimelineCommandStatusBar />
+        <TimelineCommandStatusBar commands={activeCommands} />
         {isDragOver && (
           <div className="pointer-events-none absolute inset-0 z-20 rounded-2xl border-2 border-primary/50 bg-primary/10 backdrop-blur-sm" />
         )}
         <div
-          className="flex h-full flex-col overflow-hidden relative"
+          className={cn(
+            "flex h-full flex-col overflow-hidden relative",
+            isTimelineProcessing ? "timeline-processing-active" : undefined
+          )}
           ref={timelineRef}
         >
+          {isTimelineProcessing && <div className="timeline-processing-dim" />}
           <TimelinePlayhead
             currentTime={currentTime}
             duration={duration}

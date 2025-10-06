@@ -53,7 +53,7 @@ export function EditorSidebar() {
   };
 
   return (
-    <aside className="hidden lg:flex w-20 flex-col items-center border-r border-border/40 bg-gradient-to-b from-surface-elevated/95 via-primary/5 to-primary/10 px-3 py-6 backdrop-blur">
+    <aside className="hidden lg:flex w-20 flex-col items-center border-r border-border/40 bg-sidebar/95 px-3 py-6 backdrop-blur-xl">
       <div className="flex flex-1 flex-col items-center gap-4">
         {sidebarItems.map(({ tab, label, icon: Icon }) => {
           const isActive = activeTab === tab && isMediaPanelOpen;
@@ -71,15 +71,20 @@ export function EditorSidebar() {
             >
               <span
                 className={cn(
-                  "flex h-12 w-12 items-center justify-center rounded-xl border border-transparent transition",
+                  "flex h-12 w-12 items-center justify-center rounded-xl border border-transparent transition shadow-soft",
                   isActive
-                    ? "bg-quick-action shadow-soft"
-                    : "bg-surface-base/70 hover:bg-surface-base/90 border-border/40"
+                    ? "bg-brand-gradient text-white"
+                    : "bg-surface-base/80 text-muted-foreground hover:bg-surface-base/95"
                 )}
               >
                 <Icon className="h-5 w-5" />
               </span>
-              <span className="text-[0.65rem] tracking-wide uppercase">
+              <span
+                className={cn(
+                  "text-[0.65rem] tracking-wide uppercase",
+                  isActive ? "text-foreground" : "text-muted-foreground"
+                )}
+              >
                 {label}
               </span>
             </button>
@@ -89,7 +94,7 @@ export function EditorSidebar() {
       <button
         type="button"
         onClick={() => setMediaPanelOpen(!isMediaPanelOpen)}
-        className="mt-4 flex h-10 w-10 items-center justify-center rounded-lg border border-border/40 text-muted-foreground transition hover:text-white"
+        className="mt-4 flex h-10 w-10 items-center justify-center rounded-lg border border-border/40 text-muted-foreground transition hover:text-white hover:bg-surface-base/80"
         title={isMediaPanelOpen ? "Collapse media panel" : "Expand media panel"}
       >
         {isMediaPanelOpen ? (

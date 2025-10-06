@@ -359,7 +359,7 @@ export function MediaView() {
         className={`h-full flex flex-col gap-1 transition-colors relative ${isDragOver ? "bg-accent/30" : ""}`}
         {...dragProps}
       >
-        <div className="p-3 pb-2 bg-panel">
+        <div className="p-3 pb-2 bg-panel-surface">
           {/* Search and filter controls */}
           <div className="flex items-center gap-2">
             <Button
