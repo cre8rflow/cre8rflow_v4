@@ -289,13 +289,13 @@ export function AgentPanel() {
                 disabled={isRunning}
               >
                 <div className="flex w-full items-center justify-between gap-3 rounded-[calc(var(--radius)*1.1)] bg-surface-elevated/95 px-4 py-3 transition group-hover:bg-surface-elevated/85">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-gradient text-white shadow-soft">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-gradient text-primary-foreground shadow-soft">
                     <Icon className="h-5 w-5" />
                   </span>
                   <span className="flex-1 text-[15px] font-semibold text-foreground">
                     {label}
                   </span>
-                  <ArrowUpRight className="h-4 w-4 text-foreground/70 transition group-hover:text-white" />
+                  <ArrowUpRight className="h-4 w-4 text-foreground/70 transition group-hover:text-primary-foreground" />
                 </div>
               </button>
             ))}
@@ -362,7 +362,7 @@ export function AgentPanel() {
               onClick={submitPrompt}
               disabled={isRunning || isPromptEmpty}
               className={cn(
-                "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-gradient text-white shadow-soft transition hover:shadow-medium",
+                "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-gradient text-primary-foreground shadow-soft transition hover:shadow-medium",
                 (isRunning || isPromptEmpty) && "opacity-40 cursor-not-allowed"
               )}
             >

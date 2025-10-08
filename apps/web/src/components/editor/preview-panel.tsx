@@ -1113,7 +1113,7 @@ function FullscreenPreview({
         >
           {renderBlurBackground()}
           {activeElements.length === 0 ? (
-            <div className="absolute inset-0 flex items-center justify-center text-white/60">
+            <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
               No elements at current time
             </div>
           ) : (

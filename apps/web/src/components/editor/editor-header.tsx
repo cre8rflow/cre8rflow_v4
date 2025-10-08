@@ -87,8 +87,8 @@ export function EditorHeader() {
                 variant="ghost"
                 className={
                   isActive
-                    ? "bg-surface-muted/60 text-white"
-                    : "text-muted-foreground hover:bg-surface-muted/40"
+                    ? "bg-surface-muted/60 text-foreground"
+                    : "text-muted-foreground hover:bg-surface-muted/40 hover:text-foreground"
                 }
               >
                 {link.label}
@@ -142,7 +142,7 @@ export function EditorHeader() {
       <Button
         variant="ghost"
         size="icon"
-        className="text-muted-foreground hover:text-white"
+        className="text-muted-foreground hover:text-foreground"
       >
         <Bell className="h-5 w-5" />
         <span className="sr-only">Notifications</span>
@@ -151,7 +151,7 @@ export function EditorHeader() {
       <Button
         variant="ghost"
         size="icon"
-        className="text-muted-foreground hover:text-white"
+        className="text-muted-foreground hover:text-foreground"
         onClick={() => router.push("/projects")}
       >
         <LogOut className="h-5 w-5" />

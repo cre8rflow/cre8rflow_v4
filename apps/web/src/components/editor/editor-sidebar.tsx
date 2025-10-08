@@ -65,15 +65,15 @@ export function EditorSidebar() {
               className={cn(
                 "flex w-full flex-col items-center gap-1 text-xs font-medium transition",
                 isActive
-                  ? "text-white"
-                  : "text-muted-foreground hover:text-white"
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
               )}
             >
               <span
                 className={cn(
                   "flex h-12 w-12 items-center justify-center rounded-xl border border-transparent transition shadow-soft",
                   isActive
-                    ? "bg-brand-gradient text-white"
+                    ? "bg-brand-gradient text-primary-foreground"
                     : "bg-surface-base/80 text-muted-foreground hover:bg-surface-base/95"
                 )}
               >
@@ -94,7 +94,7 @@ export function EditorSidebar() {
       <button
         type="button"
         onClick={() => setMediaPanelOpen(!isMediaPanelOpen)}
-        className="mt-4 flex h-10 w-10 items-center justify-center rounded-lg border border-border/40 text-muted-foreground transition hover:text-white hover:bg-surface-base/80"
+        className="mt-4 flex h-10 w-10 items-center justify-center rounded-lg border border-border/40 text-muted-foreground transition hover:text-foreground hover:bg-surface-base/80"
         title={isMediaPanelOpen ? "Collapse media panel" : "Expand media panel"}
       >
         {isMediaPanelOpen ? (

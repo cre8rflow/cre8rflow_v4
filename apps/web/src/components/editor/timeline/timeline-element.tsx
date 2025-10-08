@@ -178,7 +178,7 @@ export function TimelineElement({
       return (
         <div className="w-full h-full flex items-center justify-center">
           <span
-            className="text-white text-xs font-semibold truncate"
+            className="text-foreground text-xs font-semibold truncate"
             title={element.content}
           >
             {element.content}
@@ -369,9 +369,9 @@ export function TimelineElement({
             {(hasAudio ? isMuted : element.hidden) && (
               <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center pointer-events-none">
                 {hasAudio ? (
-                  <VolumeX className="h-6 w-6 text-white" />
+                  <VolumeX className="h-6 w-6 text-primary-foreground" />
                 ) : (
-                  <EyeOff className="h-6 w-6 text-white" />
+                  <EyeOff className="h-6 w-6 text-primary-foreground" />
                 )}
               </div>
             )}
