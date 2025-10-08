@@ -22,8 +22,11 @@
   "dependencies": {
     "mediabunny": "^1.9.3",
     "next": "^15.3.4",
+    "react": "^19.1.1",
     "react-country-flag": "^3.1.0",
-    "wavesurfer.js": "^7.9.8"
+    "wavesurfer.js": "^7.9.8",
+    "zod": "^4.1.8",
+    "zustand": "^5.0.8"
   },
   "trustedDependencies": [
     "@tailwindcss/oxide"

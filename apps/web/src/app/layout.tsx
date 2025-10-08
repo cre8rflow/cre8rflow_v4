@@ -10,6 +10,7 @@ import { baseMetaData } from "./metadata";
 import { defaultFont } from "../lib/font-config";
 import { BotIdClient } from "botid/client";
 import { env } from "@/env";
+import { AgentDevExpose } from "../components/dev/agent-dev-expose";
 
 export const metadata = baseMetaData;
 
@@ -42,6 +43,7 @@ export default function RootLayout({
             </StorageProvider>
             <Analytics />
             <Toaster />
+            {env.NODE_ENV === "development" ? <AgentDevExpose /> : null}
             <Script
               src="https://cdn.databuddy.cc/databuddy.js"
               strategy="afterInteractive"

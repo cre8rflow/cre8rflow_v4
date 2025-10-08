@@ -22,6 +22,7 @@ import { TIMELINE_CONSTANTS } from "@/constants/timeline-constants";
 import { checkElementOverlaps, resolveElementOverlaps } from "@/lib/timeline";
 import { DEFAULT_TEXT_ELEMENT } from "@/constants/text-constants";
 import { usePlaybackStore } from "./playback-store";
+import { videoCache } from "@/lib/video-cache";
 
 // Helper function to manage element naming with suffixes
 const getElementNameWithSuffix = (
@@ -155,7 +156,8 @@ interface TimelineStore {
   removeElementFromTrackWithRipple: (
     trackId: string,
     elementId: string,
-    pushHistory?: boolean
+    pushHistory?: boolean,
+    forceRipple?: boolean
   ) => void;
 
   // Computed values
@@ -243,6 +245,9 @@ interface TimelineStore {
     excludeElementId?: string
   ) => boolean;
   findOrCreateTrack: (trackType: TrackType) => string;
+  // New helpers for text track positioning
+  getTextTrackBelowMain: () => TimelineTrack | null;
+  ensureTextTrackBelowMain: () => string; // returns track id
   addElementAtTime: (
     item: MediaFile | TextElement,
     currentTime?: number
@@ -300,6 +305,28 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
   const sortedInitialTracks = sortTracksByOrder(initialTracks);
 
   return {
+    getTextTrackBelowMain: () => {
+      const tracks = get()._tracks;
+      const main = tracks.find((t) => t.isMain) || null;
+      if (!main) return tracks.find((t) => t.type === "text") || null;
+      const mainIndex = tracks.findIndex((t) => t.id === main.id);
+      const candidate = tracks[mainIndex + 1];
+      if (candidate && candidate.type === "text") return candidate;
+      return null;
+    },
+
+    ensureTextTrackBelowMain: () => {
+      const tracks = get()._tracks;
+      const main = tracks.find((t) => t.isMain) || null;
+      if (!main) {
+        // No main yet: insert text at index 0
+        return get().insertTrackAt("text", 0);
+      }
+      const mainIndex = tracks.findIndex((t) => t.id === main.id);
+      const existing = get().getTextTrackBelowMain();
+      if (existing) return existing.id;
+      return get().insertTrackAt("text", Math.max(0, mainIndex + 1));
+    },
     _tracks: initialTracks,
     tracks: sortedInitialTracks,
     history: [],
@@ -594,11 +621,14 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
     removeElementFromTrackWithRipple: (
       trackId,
       elementId,
-      pushHistory = true
+      pushHistory = true,
+      forceRipple = false
     ) => {
       const { _tracks, rippleEditingEnabled } = get();
 
-      if (!rippleEditingEnabled) {
+      const useRipple = forceRipple || rippleEditingEnabled;
+
+      if (!useRipple) {
         // Inline non-ripple removal logic
         if (pushHistory) get().pushHistory();
         updateTracksAndSave(
@@ -630,6 +660,12 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
         element.duration - element.trimStart - element.trimEnd;
       const elementEndTime = elementStartTime + elementDuration;
 
+      const projectFps =
+        useProjectStore.getState().activeProject?.fps ||
+        require("./project-store").DEFAULT_FPS;
+      const roundToFrame = (t: number) =>
+        Math.max(0, Math.round(t * projectFps) / projectFps);
+
       const updatedTracks = _tracks
         .map((currentTrack) => {
           const shouldApplyRipple = currentTrack.id === trackId;
@@ -649,13 +685,16 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
                 return currentElement;
               }
 
-              if (currentElement.startTime >= elementEndTime) {
+              const EPS = 1e-3;
+              if (currentElement.startTime >= elementEndTime - EPS) {
+                const isImmediateNeighbor =
+                  Math.abs(currentElement.startTime - elementEndTime) < EPS;
+                const shifted = currentElement.startTime - elementDuration;
                 return {
                   ...currentElement,
-                  startTime: Math.max(
-                    0,
-                    currentElement.startTime - elementDuration
-                  ),
+                  startTime: isImmediateNeighbor
+                    ? roundToFrame(elementStartTime)
+                    : roundToFrame(shifted),
                 };
               }
               return currentElement;
@@ -724,6 +763,11 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
       trimEnd,
       pushHistory = true
     ) => {
+      const track = get()._tracks.find((t) => t.id === trackId);
+      const element = track?.elements.find((e) => e.id === elementId);
+      if (element && element.type === "media") {
+        videoCache.clearVideo(element.mediaId);
+      }
       if (pushHistory) get().pushHistory();
       updateTracksAndSave(
         get()._tracks.map((track) =>
@@ -747,6 +791,11 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
       duration,
       pushHistory = true
     ) => {
+      const track = get()._tracks.find((t) => t.id === trackId);
+      const element = track?.elements.find((e) => e.id === elementId);
+      if (element && element.type === "media") {
+        videoCache.clearVideo(element.mediaId);
+      }
       if (pushHistory) get().pushHistory();
       updateTracksAndSave(
         get()._tracks.map((track) =>
@@ -768,6 +817,11 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
       startTime,
       pushHistory = true
     ) => {
+      const track = get()._tracks.find((t) => t.id === trackId);
+      const element = track?.elements.find((e) => e.id === elementId);
+      if (element && element.type === "media") {
+        videoCache.clearVideo(element.mediaId);
+      }
       if (pushHistory) get().pushHistory();
       const clampedStartTime = Math.max(0, startTime);
       updateTracksAndSave(
@@ -897,6 +951,10 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
 
       if (!element) return;
 
+      if (element.type === "media") {
+        videoCache.clearVideo(element.mediaId);
+      }
+
       const effectiveStart = element.startTime;
       const effectiveEnd =
         element.startTime +
@@ -937,6 +995,10 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
       const element = track?.elements.find((c) => c.id === elementId);
 
       if (!element) return;
+
+      if (element.type === "media") {
+        videoCache.clearVideo(element.mediaId);
+      }
 
       const effectiveStart = element.startTime;
       const effectiveEnd =
@@ -1401,7 +1463,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
 
     addElementAtTime: (item: MediaFile | TextElement, currentTime = 0) => {
       if (item.type === "text") {
-        const targetTrackId = get().insertTrackAt("text", 0);
+        const targetTrackId = get().ensureTextTrackBelowMain();
         get().addElementToTrack(
           targetTrackId,
           buildTextElement(item, currentTime)
@@ -1427,7 +1489,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
 
     addElementToNewTrack: (item) => {
       if (item.type === "text") {
-        const targetTrackId = get().insertTrackAt("text", 0);
+        const targetTrackId = get().ensureTextTrackBelowMain();
         get().addElementToTrack(
           targetTrackId,
           buildTextElement(item as TextElement | DragData, 0)
@@ -1605,6 +1667,12 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
         );
         return;
       }
+
+      elementsToSplit.forEach(({ element }) => {
+        if (element.type === "media") {
+          videoCache.clearVideo(element.mediaId);
+        }
+      });
 
       get().pushHistory();
 

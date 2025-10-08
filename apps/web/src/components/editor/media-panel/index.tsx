@@ -1,12 +1,10 @@
 "use client";
 
-import { TabBar } from "./tabbar";
 import { MediaView } from "./views/media";
 import { useMediaPanelStore, Tab } from "./store";
 import { TextView } from "./views/text";
 import { SoundsView } from "./views/sounds";
 import { StickersView } from "./views/stickers";
-import { Separator } from "@/components/ui/separator";
 import { SettingsView } from "./views/settings";
 import { Captions } from "./views/captions";
 
@@ -43,10 +41,8 @@ export function MediaPanel() {
   };
 
   return (
-    <div className="h-full flex bg-panel">
-      <TabBar />
-      <Separator orientation="vertical" />
-      <div className="flex-1 overflow-hidden">{viewMap[activeTab]}</div>
+    <div className="h-full w-full overflow-hidden bg-panel-surface">
+      {viewMap[activeTab]}
     </div>
   );
 }

@@ -14,6 +14,7 @@ import {
   Music,
   Video,
 } from "lucide-react";
+import { CheckCircle2, XCircle, Clock3 } from "lucide-react";
 import { useRef, useState, useMemo } from "react";
 import { useHighlightScroll } from "@/hooks/use-highlight-scroll";
 import { toast } from "sonner";
@@ -141,7 +142,7 @@ export function MediaView() {
   };
 
   const filteredMediaItems = useMemo(() => {
-    let filtered = mediaFiles.filter((item) => {
+    const filtered = mediaFiles.filter((item) => {
       if (item.ephemeral) return false;
       return true;
     });
@@ -185,6 +186,89 @@ export function MediaView() {
     filteredMediaItems.forEach((item) => {
       let preview: React.ReactNode;
 
+      const renderIndexingBadge = () => {
+        if (item.type !== "video") return null;
+        const status = item.indexingStatus;
+        const progress = item.indexingProgress ?? 0;
+        if (!status) return null;
+
+        if (status === "processing") {
+          const pct = Math.max(0, Math.min(100, Math.round(progress)));
+          return (
+            <div
+              className="absolute top-1 right-1 z-10 flex items-center gap-1"
+              role="status"
+              aria-live="polite"
+              title={`Indexing… ${pct}%`}
+            >
+              <div
+                className="relative h-7 w-7 rounded-full p-[2px] shadow-sm border border-border/60"
+                style={{
+                  background: `conic-gradient(var(--color-primary) ${pct}%, var(--color-muted) ${pct}%)`,
+                }}
+              >
+                <div className="bg-background/90 backdrop-blur-xs rounded-full h-full w-full flex items-center justify-center">
+                  <Loader2
+                    className="h-3.5 w-3.5 text-primary animate-spin"
+                    aria-hidden="true"
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        if (status === "pending") {
+          return (
+            <div
+              className="absolute top-1 right-1 z-10"
+              role="status"
+              aria-live="polite"
+              title="Indexing queued"
+            >
+              <div className="rounded-full bg-background/90 backdrop-blur-xs border border-border/60 shadow-sm h-7 w-7 inline-flex items-center justify-center">
+                <Loader2
+                  className="h-3.5 w-3.5 text-primary animate-spin"
+                  aria-hidden="true"
+                />
+              </div>
+            </div>
+          );
+        }
+
+        if (status === "completed") {
+          return (
+            <div
+              className="absolute top-1 right-1 z-10"
+              role="status"
+              aria-live="polite"
+              title="Indexed"
+            >
+              <div className="rounded-full bg-linear-to-r from-emerald-500 to-green-600 text-white shadow-sm h-7 px-2 inline-flex items-center gap-1 border border-white/20">
+                <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+              </div>
+            </div>
+          );
+        }
+
+        if (status === "failed") {
+          return (
+            <div
+              className="absolute top-1 right-1 z-10"
+              role="status"
+              aria-live="polite"
+              title="Indexing failed"
+            >
+              <div className="rounded-full bg-linear-to-r from-rose-500 to-red-600 text-white shadow-sm h-7 px-2 inline-flex items-center gap-1 border border-white/20">
+                <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+              </div>
+            </div>
+          );
+        }
+
+        return null;
+      };
+
       if (item.type === "image") {
         preview = (
           <div className="w-full h-full flex items-center justify-center">
@@ -200,6 +284,7 @@ export function MediaView() {
         if (item.thumbnailUrl) {
           preview = (
             <div className="relative w-full h-full">
+              {renderIndexingBadge()}
               <img
                 src={item.thumbnailUrl}
                 alt={item.name}
@@ -274,7 +359,7 @@ export function MediaView() {
         className={`h-full flex flex-col gap-1 transition-colors relative ${isDragOver ? "bg-accent/30" : ""}`}
         {...dragProps}
       >
-        <div className="p-3 pb-2 bg-panel">
+        <div className="p-3 pb-2 bg-panel-surface">
           {/* Search and filter controls */}
           <div className="flex items-center gap-2">
             <Button

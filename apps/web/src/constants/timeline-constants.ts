@@ -6,19 +6,19 @@ export const TRACK_COLORS: Record<
   { solid: string; background: string; border: string }
 > = {
   media: {
-    solid: "bg-blue-500",
-    background: "",
-    border: "",
+    solid: "bg-primary",
+    background: "bg-primary/20",
+    border: "border border-primary/30",
   },
   text: {
     solid: "bg-[#5DBAA0]",
-    background: "bg-[#5DBAA0]",
-    border: "",
+    background: "bg-[#5DBAA0]/20",
+    border: "border border-[#5DBAA0]/40",
   },
   audio: {
-    solid: "bg-green-500",
-    background: "bg-[#915DBE]",
-    border: "",
+    solid: "bg-[#915DBE]",
+    background: "bg-[#915DBE]/20",
+    border: "border border-[#915DBE]/40",
   },
 } as const;
 
@@ -34,7 +34,7 @@ export function getTrackElementClasses(type: TrackType) {
 
 // Track height definitions
 export const TRACK_HEIGHTS: Record<TrackType, number> = {
-  media: 60,
+  media: 90,
   text: 25,
   audio: 50,
 } as const;
@@ -72,7 +72,7 @@ export function getTotalTracksHeight(
 export const TIMELINE_CONSTANTS = {
   ELEMENT_MIN_WIDTH: 80,
   PIXELS_PER_SECOND: 50,
-  TRACK_HEIGHT: 60, // Default fallback
+  TRACK_HEIGHT: 90, // Default fallback for media tracks
   DEFAULT_TEXT_DURATION: 5,
   DEFAULT_IMAGE_DURATION: 5,
   ZOOM_LEVELS: [0.25, 0.5, 1, 1.5, 2, 3, 4],

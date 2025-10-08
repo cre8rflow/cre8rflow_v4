@@ -1,7 +1,8 @@
 {
-  "compilerOptions": {
-    "strictNullChecks": true,
-    "moduleResolution": "bundler",
-    "module": "esnext"
-  }
+  "files": [],
+  "references": [
+    { "path": "apps/web" },
+    { "path": "packages/auth" },
+    { "path": "packages/db" }
+  ]
 }

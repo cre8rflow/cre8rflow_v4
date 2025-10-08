@@ -27,7 +27,7 @@ const __sharedFrameCache: Map<number, CachedFrame> =
 __frameCacheGlobal.__sharedFrameCache = __sharedFrameCache;
 
 export function useFrameCache(options: FrameCacheOptions = {}) {
-  const { maxCacheSize = 300, cacheResolution = 30 } = options; // 10 seconds at 30fps
+  const { maxCacheSize = 120, cacheResolution = 30 } = options; // ~4 seconds at 30fps
 
   const frameCacheRef = useRef(__sharedFrameCache);
 
@@ -178,16 +178,8 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
         activeProject,
         sceneId
       );
-      console.log(cached.timelineHash === currentHash);
       if (cached.timelineHash !== currentHash) {
         // Cache is stale, remove it
-        console.log(
-          "Cache miss - hash mismatch:",
-          JSON.stringify({
-            cachedHash: cached.timelineHash.slice(0, 100),
-            currentHash: currentHash.slice(0, 100),
-          })
-        );
         frameCacheRef.current.delete(frameKey);
         return null;
       }
@@ -222,8 +214,8 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
         const entries = Array.from(frameCacheRef.current.entries());
         entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
 
-        // Remove oldest 20% of entries
-        const toRemove = Math.floor(entries.length * 0.2);
+        // Remove oldest 25% of entries for breathing room
+        const toRemove = Math.max(1, Math.floor(entries.length * 0.25));
         for (let i = 0; i < toRemove; i++) {
           frameCacheRef.current.delete(entries[i][0]);
         }
@@ -268,7 +260,7 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
       activeProject: TProject | null,
       renderFunction: (time: number) => Promise<ImageData>,
       sceneId?: string,
-      range: number = 3 // seconds
+      range = 0.75 // seconds – keep tighter to limit memory usage
     ) => {
       const framesToPreRender: number[] = [];
 
@@ -286,22 +278,8 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
         }
       }
 
-      // Expand to full 1-second buckets to avoid fragmented tiny cache regions
-      const secondsToPreRender = new Set<number>();
-      for (const t of framesToPreRender) {
-        secondsToPreRender.add(Math.floor(t));
-      }
-
-      const expandedTimes: number[] = [];
-      for (const s of secondsToPreRender) {
-        for (let k = 0; k < cacheResolution; k++) {
-          const t = s + k / cacheResolution;
-          if (t < 0) continue;
-          if (!isFrameCached(t, tracks, mediaFiles, activeProject, sceneId)) {
-            expandedTimes.push(t);
-          }
-        }
-      }
+      // Avoid expanding to full buckets to keep work minimal
+      const expandedTimes: number[] = framesToPreRender.slice();
 
       // Sort forward-first near currentTime to improve perceived responsiveness
       expandedTimes.sort((a, b) => {
@@ -310,8 +288,8 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
         return da - db;
       });
 
-      // Cap total scheduled renders to avoid jank (e.g., up to 90 frames)
-      const CAP = Math.max(30, Math.min(90, cacheResolution * 3));
+      // Cap total scheduled renders to avoid excessive memory churn
+      const CAP = Math.max(8, Math.min(30, Math.round(cacheResolution)));
       const toSchedule = expandedTimes.slice(0, CAP);
 
       // Pre-render during idle time

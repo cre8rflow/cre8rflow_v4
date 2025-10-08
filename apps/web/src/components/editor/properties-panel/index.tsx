@@ -15,7 +15,7 @@ export function PropertiesPanel() {
   return (
     <>
       {selectedElements.length > 0 ? (
-        <ScrollArea className="h-full bg-panel rounded-sm">
+        <ScrollArea className="h-full rounded-3xl border border-border/40 bg-gradient-to-b from-surface-elevated/95 via-primary/5 to-primary/10">
           {selectedElements.map(({ trackId, elementId }) => {
             const track = tracks.find((t) => t.id === trackId);
             const element = track?.elements.find((e) => e.id === elementId);
@@ -54,7 +54,7 @@ export function PropertiesPanel() {
 
 function EmptyView() {
   return (
-    <div className="bg-panel h-full p-4 flex flex-col items-center justify-center gap-3">
+    <div className="h-full p-4 flex flex-col items-center justify-center gap-3 rounded-3xl border border-border/40 bg-gradient-to-b from-surface-elevated/95 via-primary/5 to-primary/10">
       <SquareSlashIcon
         className="w-10 h-10 text-muted-foreground"
         strokeWidth={1.5}

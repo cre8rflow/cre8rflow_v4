@@ -160,7 +160,7 @@ export default function RoadmapPage() {
                               item.status.type === "complete",
                             "bg-yellow-500! text-white":
                               item.status.type === "pending",
-                            "bg-blue-500! text-white":
+                            "bg-primary! text-primary-foreground":
                               item.status.type === "info",
                             "bg-foreground/10! text-accent-foreground":
                               item.status.type === "default",

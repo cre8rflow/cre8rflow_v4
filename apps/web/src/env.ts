@@ -13,17 +13,34 @@ export const env = createEnv({
     NODE_ENV: z
       .enum(["development", "production", "test"])
       .default("development"),
-    UPSTASH_REDIS_REST_URL: z.string().url(),
-    UPSTASH_REDIS_REST_TOKEN: z.string(),
-    FREESOUND_CLIENT_ID: z.string(),
-    FREESOUND_API_KEY: z.string(),
+    UPSTASH_REDIS_REST_URL: z.string().url().optional(),
+    UPSTASH_REDIS_REST_TOKEN: z.string().optional(),
+    FREESOUND_CLIENT_ID: z.string().optional(),
+    FREESOUND_API_KEY: z.string().optional(),
     // R2 / Cloudflare
-    CLOUDFLARE_ACCOUNT_ID: z.string(),
-    R2_ACCESS_KEY_ID: z.string(),
-    R2_SECRET_ACCESS_KEY: z.string(),
-    R2_BUCKET_NAME: z.string(),
+    CLOUDFLARE_ACCOUNT_ID: z.string().optional(),
+    R2_ACCESS_KEY_ID: z.string().optional(),
+    R2_SECRET_ACCESS_KEY: z.string().optional(),
+    R2_BUCKET_NAME: z.string().optional(),
     // Modal transcription
-    MODAL_TRANSCRIPTION_URL: z.string(),
+    MODAL_TRANSCRIPTION_URL: z.string().optional(),
+    // Supabase (for V3 integration - persistent storage)
+    SUPABASE_URL: z.string().url().optional(),
+    SUPABASE_SERVICE_KEY: z.string().optional(),
+    // Twelvelabs (for V3 integration - AI video analysis)
+    TWELVELABS_API_KEY: z.string().optional(),
+    // OpenAI planner (agent orchestration)
+    OPENAI_API_KEY: z.string().optional(),
+    OPENAI_MODEL: z.string().optional(),
+    OPENAI_RESP_FORMAT: z.enum(["json_object", "json_schema"]).optional(),
+    // Planner behavior
+    AGENT_PLANNER_FALLBACK: z
+      .enum(["true", "false"])
+      .optional()
+      .default("true"),
+    // Agent thinking/reasoning display
+    AGENT_THOUGHT_STRICT: z.enum(["true", "false"]).optional().default("false"),
+    AGENT_THINKING_TIMEOUT_MS: z.coerce.number().optional().default(3000),
   },
   client: {},
   runtimeEnv: {
@@ -41,5 +58,17 @@ export const env = createEnv({
     R2_BUCKET_NAME: process.env.R2_BUCKET_NAME,
     // Modal transcription
     MODAL_TRANSCRIPTION_URL: process.env.MODAL_TRANSCRIPTION_URL,
+    // Supabase (for V3 integration - persistent storage)
+    SUPABASE_URL: process.env.SUPABASE_URL,
+    SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY,
+    // Twelvelabs (for V3 integration - AI video analysis)
+    TWELVELABS_API_KEY: process.env.TWELVELABS_API_KEY,
+    // OpenAI planner (agent orchestration)
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    OPENAI_MODEL: process.env.OPENAI_MODEL,
+    OPENAI_RESP_FORMAT: process.env.OPENAI_RESP_FORMAT,
+    AGENT_PLANNER_FALLBACK: process.env.AGENT_PLANNER_FALLBACK,
+    AGENT_THOUGHT_STRICT: process.env.AGENT_THOUGHT_STRICT,
+    AGENT_THINKING_TIMEOUT_MS: process.env.AGENT_THINKING_TIMEOUT_MS,
   },
 });

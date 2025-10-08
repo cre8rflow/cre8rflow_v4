@@ -1,11 +1,12 @@
 "use client";
 
+import Image from "next/image";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
+import { ChevronDown, SquarePen, Trash, LogOut, Bell } from "lucide-react";
+
 import { Button } from "../ui/button";
-import { ChevronDown, ArrowLeft, SquarePen, Trash } from "lucide-react";
-import { HeaderBase } from "../header-base";
-import { useProjectStore } from "@/stores/project-store";
-import { KeyboardShortcutsHelp } from "../keyboard-shortcuts-help";
-import { useState } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,23 +14,38 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
-import Link from "next/link";
+import { HeaderBase } from "../header-base";
+import { useProjectStore } from "@/stores/project-store";
+import { KeyboardShortcutsHelp } from "../keyboard-shortcuts-help";
 import { RenameProjectDialog } from "../rename-project-dialog";
 import { DeleteProjectDialog } from "../delete-project-dialog";
-import { useRouter } from "next/navigation";
-import { FaDiscord } from "react-icons/fa6";
-import { PanelPresetSelector } from "./panel-preset-selector";
 import { ExportButton } from "./export-button";
 import { ThemeToggle } from "../theme-toggle";
+import { PanelPresetSelector } from "./panel-preset-selector";
+
+const NAV_LINKS = [
+  { href: "/dashboard", label: "Dashboard" },
+  { href: "/projects", label: "Projects" },
+  { href: "/templates", label: "Templates" },
+  { href: "/billing", label: "Billing" },
+  { href: "/account", label: "Account" },
+];
 
 export function EditorHeader() {
   const { activeProject, renameProject, deleteProject } = useProjectStore();
+  const pathname = usePathname();
+  const router = useRouter();
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
-  const router = useRouter();
+
+  const activeLink = useMemo(() => {
+    if (!pathname) return null;
+    return (
+      NAV_LINKS.find((link) => pathname.startsWith(link.href))?.href ?? null
+    );
+  }, [pathname]);
 
   const handleNameSave = async (newName: string) => {
-    console.log("handleNameSave", newName);
     if (activeProject && newName.trim() && newName !== activeProject.name) {
       try {
         await renameProject(activeProject.id, newName.trim());
@@ -41,61 +57,117 @@ export function EditorHeader() {
   };
 
   const handleDelete = () => {
-    if (activeProject) {
-      deleteProject(activeProject.id);
-      setIsDeleteDialogOpen(false);
-      router.push("/projects");
-    }
+    if (!activeProject) return;
+    deleteProject(activeProject.id);
+    setIsDeleteDialogOpen(false);
+    router.push("/projects");
   };
 
   const leftContent = (
-    <div className="flex items-center gap-2">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="secondary"
-            className="h-auto py-1.5 px-2.5 flex items-center justify-center"
-          >
-            <ChevronDown className="text-muted-foreground" />
-            <span className="text-[0.85rem] mr-2">{activeProject?.name}</span>
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-40 z-100">
-          <Link href="/projects">
-            <DropdownMenuItem className="flex items-center gap-1.5">
-              <ArrowLeft className="h-4 w-4" />
-              Projects
-            </DropdownMenuItem>
-          </Link>
-          <DropdownMenuItem
-            className="flex items-center gap-1.5"
-            onClick={() => setIsRenameDialogOpen(true)}
-          >
-            <SquarePen className="h-4 w-4" />
-            Rename project
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            variant="destructive"
-            className="flex items-center gap-1.5"
-            onClick={() => setIsDeleteDialogOpen(true)}
-          >
-            <Trash className="h-4 w-4" />
-            Delete Project
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem asChild>
-            <Link
-              href="https://discord.gg/zmR9N35cjK"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5"
-            >
-              <FaDiscord className="h-4 w-4" />
-              Discord
+    <div className="flex items-center gap-5">
+      <Link href="/" className="flex items-center gap-2">
+        <span className="relative inline-flex h-10 w-10 items-center justify-center overflow-hidden rounded-2xl bg-quick-action shadow-soft">
+          <Image
+            src="/Kallio_v2.png"
+            alt="Kallio logo"
+            width={40}
+            height={40}
+            priority
+            className="h-full w-full object-cover"
+          />
+        </span>
+        <span className="text-lg font-semibold tracking-tight">Kallio</span>
+      </Link>
+      <nav className="hidden lg:flex items-center gap-1 text-sm">
+        {NAV_LINKS.map((link) => {
+          const isActive = activeLink === link.href;
+          return (
+            <Link key={link.href} href={link.href}>
+              <Button
+                variant="ghost"
+                className={
+                  isActive
+                    ? "bg-surface-muted/60 text-foreground"
+                    : "text-muted-foreground hover:bg-surface-muted/40 hover:text-foreground"
+                }
+              >
+                {link.label}
+              </Button>
             </Link>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+          );
+        })}
+      </nav>
+    </div>
+  );
+
+  const centerContent = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          className="bg-surface-muted/60 text-foreground shadow-soft transition hover:bg-surface-muted"
+          size="sm"
+        >
+          <span className="mr-2 max-w-[12rem] truncate text-sm font-medium">
+            {activeProject?.name ?? "Untitled Project"}
+          </span>
+          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="center"
+        className="w-56 bg-surface-elevated shadow-soft"
+      >
+        <DropdownMenuItem onClick={() => router.push("/projects")}>
+          Back to projects
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setIsRenameDialogOpen(true)}>
+          <SquarePen className="mr-2 h-4 w-4" /> Rename project
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={() => setIsDeleteDialogOpen(true)}
+          className="text-destructive focus:bg-destructive/10"
+        >
+          <Trash className="mr-2 h-4 w-4" /> Delete project
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  const rightContent = (
+    <div className="flex items-center gap-2">
+      <PanelPresetSelector />
+      <KeyboardShortcutsHelp />
+      <ExportButton />
+      <Button
+        variant="ghost"
+        size="icon"
+        className="text-muted-foreground hover:text-foreground"
+      >
+        <Bell className="h-5 w-5" />
+        <span className="sr-only">Notifications</span>
+      </Button>
+      <ThemeToggle />
+      <Button
+        variant="ghost"
+        size="icon"
+        className="text-muted-foreground hover:text-foreground"
+        onClick={() => router.push("/projects")}
+      >
+        <LogOut className="h-5 w-5" />
+        <span className="sr-only">Exit editor</span>
+      </Button>
+    </div>
+  );
+
+  return (
+    <>
+      <HeaderBase
+        leftContent={leftContent}
+        centerContent={centerContent}
+        rightContent={rightContent}
+        className="h-[4.25rem] items-center border-b border-border/40 bg-surface-elevated/80 px-6 shadow-soft backdrop-blur"
+      />
       <RenameProjectDialog
         isOpen={isRenameDialogOpen}
         onOpenChange={setIsRenameDialogOpen}
@@ -108,23 +180,6 @@ export function EditorHeader() {
         onConfirm={handleDelete}
         projectName={activeProject?.name || ""}
       />
-    </div>
-  );
-
-  const rightContent = (
-    <nav className="flex items-center gap-2">
-      <PanelPresetSelector />
-      <KeyboardShortcutsHelp />
-      <ExportButton />
-      <ThemeToggle />
-    </nav>
-  );
-
-  return (
-    <HeaderBase
-      leftContent={leftContent}
-      rightContent={rightContent}
-      className="bg-background h-[3.2rem] px-3 items-center mt-0.5"
-    />
+    </>
   );
 }

@@ -36,7 +36,7 @@ import { useInfiniteScroll } from "@/hooks/use-infinite-scroll";
 
 export function SoundsView() {
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col bg-panel-surface">
       <Tabs defaultValue="sound-effects" className="flex flex-col h-full">
         <div className="px-3 pt-4 pb-0">
           <TabsList>
@@ -45,22 +45,22 @@ export function SoundsView() {
             <TabsTrigger value="saved">Saved</TabsTrigger>
           </TabsList>
         </div>
-        <Separator className="my-4" />
+        <Separator className="my-4 border-border/50" />
         <TabsContent
           value="sound-effects"
-          className="p-5 pt-0 mt-0 flex-1 flex flex-col min-h-0"
+          className="p-5 pt-0 mt-0 flex-1 flex flex-col min-h-0 bg-panel-surface"
         >
           <SoundEffectsView />
         </TabsContent>
         <TabsContent
           value="saved"
-          className="p-5 pt-0 mt-0 flex-1 flex flex-col min-h-0"
+          className="p-5 pt-0 mt-0 flex-1 flex flex-col min-h-0 bg-panel-surface"
         >
           <SavedSoundsView />
         </TabsContent>
         <TabsContent
           value="songs"
-          className="p-5 pt-0 mt-0 flex-1 flex flex-col min-h-0"
+          className="p-5 pt-0 mt-0 flex-1 flex flex-col min-h-0 bg-panel-surface"
         >
           <SongsView />
         </TabsContent>

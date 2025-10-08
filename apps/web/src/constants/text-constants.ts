@@ -1,17 +1,14 @@
 import { TextElement } from "@/types/timeline";
 import { TIMELINE_CONSTANTS } from "./timeline-constants";
 
-export const DEFAULT_TEXT_ELEMENT: Omit<
-  TextElement,
-  "id"
-> = {
+export const DEFAULT_TEXT_ELEMENT: Omit<TextElement, "id"> = {
   type: "text",
   name: "Text",
   content: "Default Text",
   fontSize: 48,
   fontFamily: "Arial",
   color: "#ffffff",
-  backgroundColor: "transparent",
+  backgroundColor: "", // No background - transparent text overlay
   textAlign: "center",
   fontWeight: "normal",
   fontStyle: "normal",

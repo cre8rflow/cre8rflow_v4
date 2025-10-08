@@ -18,6 +18,7 @@ import AudioWaveform from "../audio-waveform";
 import { toast } from "sonner";
 import { TimelineElementProps, MediaElement } from "@/types/timeline";
 import { useTimelineElementResize } from "@/hooks/use-timeline-element-resize";
+import { cn } from "@/lib/utils";
 import {
   getTrackElementClasses,
   TIMELINE_CONSTANTS,
@@ -31,6 +32,9 @@ import {
   ContextMenuTrigger,
 } from "../../ui/context-menu";
 import { useMediaPanelStore } from "../media-panel/store";
+import { useMemo, useRef } from "react";
+import type { CSSProperties } from "react";
+import { useElementCommandStatus } from "@/stores/timeline-command-store";
 
 export function TimelineElement({
   element,
@@ -89,7 +93,22 @@ export function TimelineElement({
       ? dragState.currentTime
       : element.startTime;
 
-  const elementLeft = elementStartTime * 50 * zoomLevel;
+  const elementLeft = Math.floor(
+    elementStartTime * TIMELINE_CONSTANTS.PIXELS_PER_SECOND * zoomLevel
+  );
+
+  const commandStatuses = useElementCommandStatus(track.id, element.id);
+
+  const commandFrames = useMemo(() => {
+    return commandStatuses.map(({ command, target }) => ({
+      id: `${command.id}-${command.phase}`,
+      phase: command.phase,
+      progress: Math.max(0, Math.min(1, target.progress)),
+      theme: command.theme,
+      description: command.description,
+      effect: command.type,
+    }));
+  }, [commandStatuses]);
 
   const handleElementSplitContext = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -157,8 +176,13 @@ export function TimelineElement({
   const renderElementContent = () => {
     if (element.type === "text") {
       return (
-        <div className="w-full h-full flex items-center justify-start pl-2">
-          <span className="text-xs text-white truncate">{element.content}</span>
+        <div className="w-full h-full flex items-center justify-center">
+          <span
+            className="text-foreground text-xs font-semibold truncate"
+            title={element.content}
+          >
+            {element.content}
+          </span>
         </div>
       );
     }
@@ -190,7 +214,9 @@ export function TimelineElement({
             }`}
           >
             <div
-              className={`absolute top-[0.25rem] bottom-[0.25rem] left-0 right-0`}
+              className={
+                "absolute top-[0.25rem] bottom-[0.25rem] left-0 right-0"
+              }
               style={{
                 backgroundImage: imageUrl ? `url(${imageUrl})` : "none",
                 backgroundRepeat: "repeat-x",
@@ -252,11 +278,24 @@ export function TimelineElement({
           onMouseLeave={resizing ? handleResizeEnd : undefined}
         >
           <div
-            className={`relative h-full rounded-[0.5rem] cursor-pointer overflow-hidden ${getTrackElementClasses(
-              track.type
-            )} ${isSelected ? "" : ""} ${
-              isBeingDragged ? "z-50" : "z-10"
-            } ${element.hidden ? "opacity-50" : ""}`}
+            className={cn(
+              "relative h-full cursor-pointer overflow-hidden transition-all",
+              element.type === "text"
+                ? "rounded-none bg-gradient-to-r from-green-700 to-green-500"
+                : "rounded-none bg-surface-elevated/90",
+              element.type === "text"
+                ? undefined
+                : getTrackElementClasses(track.type),
+              isBeingDragged
+                ? "z-50 ring-1 ring-primary/60 shadow-soft"
+                : "z-10",
+              isSelected
+                ? "ring-1 ring-primary/60 shadow-soft"
+                : element.type === "text"
+                  ? undefined
+                  : "hover:bg-surface-elevated",
+              element.hidden ? "opacity-50" : undefined
+            )}
             onClick={(e) => onElementClick && onElementClick(e, element)}
             onMouseDown={handleElementMouseDown}
             onContextMenu={(e) =>
@@ -267,12 +306,72 @@ export function TimelineElement({
               {renderElementContent()}
             </div>
 
+            {commandFrames.map((frame) => {
+              const progress = frame.phase === "complete"
+                ? 1
+                : Math.max(0, Math.min(1, frame.progress));
+              const styleVars = {
+                "--command-frame-color": frame.theme.color,
+                "--command-frame-fill": frame.theme.fill,
+                "--command-frame-highlight": frame.theme.highlight,
+              } as CSSProperties;
+
+              const label = frame.theme?.label || frame.effect?.toUpperCase();
+              let statusText = "";
+              switch (frame.phase) {
+                case "preview":
+                  statusText = "Queued";
+                  break;
+                case "executing":
+                  statusText = `${Math.round(progress * 100)}%`;
+                  break;
+                case "complete":
+                  statusText = "Done";
+                  break;
+                case "error":
+                  statusText = "Error";
+                  break;
+                default:
+                  statusText = frame.phase;
+              }
+
+              return (
+                <div
+                  key={frame.id}
+                  className={cn(
+                    "timeline-command-frame",
+                    `timeline-command-frame--${frame.phase}`
+                  )}
+                  style={styleVars}
+                >
+                  <div
+                    className="timeline-command-frame__progress"
+                    aria-hidden
+                    style={{ width: `${progress * 100}%` }}
+                  />
+                  {label ? (
+                    <div className="timeline-command-frame__badge">
+                      {label}
+                    </div>
+                  ) : null}
+                  {statusText ? (
+                    <div className="timeline-command-frame__status" aria-live="polite">
+                      <span className="timeline-command-frame__status-dot" />
+                      <span className="timeline-command-frame__status-text">
+                        {statusText}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+
             {(hasAudio ? isMuted : element.hidden) && (
               <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center pointer-events-none">
                 {hasAudio ? (
-                  <VolumeX className="h-6 w-6 text-white" />
+                  <VolumeX className="h-6 w-6 text-primary-foreground" />
                 ) : (
-                  <EyeOff className="h-6 w-6 text-white" />
+                  <EyeOff className="h-6 w-6 text-primary-foreground" />
                 )}
               </div>
             )}

@@ -28,11 +28,33 @@ const ResizableHandle = ({
 }) => (
   <ResizablePrimitive.PanelResizeHandle
     className={cn(
-      "relative flex w-px items-center justify-center bg-transparent after:absolute after:inset-y-0 after:left-1/2 after:w-1 after:-translate-x-1/2 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 data-[panel-group-direction=vertical]:h-px data-[panel-group-direction=vertical]:w-full data-[panel-group-direction=vertical]:after:left-0 data-[panel-group-direction=vertical]:after:h-1 data-[panel-group-direction=vertical]:after:w-full data-[panel-group-direction=vertical]:after:-translate-y-1/2 data-[panel-group-direction=vertical]:after:translate-x-0 [&[data-panel-group-direction=vertical]>div]:rotate-90",
+      // Base: make the interactive area comfortably large and draggable
+      "relative z-10 flex touch-none select-none items-center justify-center bg-transparent",
+      // Horizontal groups → vertical handle
+      "h-full data-[panel-group-direction=horizontal]:w-2 data-[panel-group-direction=horizontal]:cursor-col-resize",
+      // Vertical groups → horizontal handle
+      "w-full data-[panel-group-direction=vertical]:h-2 data-[panel-group-direction=vertical]:cursor-row-resize",
+      // Visual hairline indicator using ::after so the hit area stays wide
+      "after:absolute after:bg-border/70 data-[panel-group-direction=horizontal]:after:inset-y-0 data-[panel-group-direction=horizontal]:after:left-1/2 data-[panel-group-direction=horizontal]:after:w-px data-[panel-group-direction=horizontal]:after:-translate-x-1/2 data-[panel-group-direction=vertical]:after:inset-x-0 data-[panel-group-direction=vertical]:after:top-1/2 data-[panel-group-direction=vertical]:after:h-px data-[panel-group-direction=vertical]:after:-translate-y-1/2",
+      // Focus styles for a11y
+      "focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1",
       className
     )}
     {...props}
-  />
+  >
+    {withHandle ? (
+      <div
+        aria-hidden
+        className={cn(
+          // Centered grip dots/line for affordance
+          "pointer-events-none rounded-full bg-border/80",
+          // Size and orientation of the grip
+          "data-[panel-group-direction=horizontal]:h-10 data-[panel-group-direction=horizontal]:w-1",
+          "data-[panel-group-direction=vertical]:h-1 data-[panel-group-direction=vertical]:w-10"
+        )}
+      />
+    ) : null}
+  </ResizablePrimitive.PanelResizeHandle>
 );
 
 export { ResizablePanelGroup, ResizablePanel, ResizableHandle };

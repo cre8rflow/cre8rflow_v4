@@ -68,6 +68,12 @@ export async function renderTimelineFrame({
     ? canvasHeight / projectCanvasSize.height
     : 1;
   const idToMedia = new Map(mediaFiles.map((m) => [m.id, m] as const));
+  // Cache frames fetched during this render to avoid duplicate requests that may
+  // invalidate/close previously returned frames mid-draw.
+  const framesByMediaId = new Map<
+    string,
+    Awaited<ReturnType<typeof videoCache.getFrameAt>> | null
+  >();
   const active: Array<{
     track: TimelineTrack;
     element: TimelineTrack["elements"][number];
@@ -111,11 +117,15 @@ export async function renderTimelineFrame({
       try {
         if (mediaItem.type === "video") {
           const localTime = time - element.startTime + element.trimStart;
-          const frame = await videoCache.getFrameAt(
-            mediaItem.id,
-            mediaItem.file,
-            Math.max(0, localTime)
-          );
+          let frame = framesByMediaId.get(mediaItem.id) ?? null;
+          if (frame === undefined || frame === null) {
+            frame = await videoCache.getFrameAt(
+              mediaItem.id,
+              mediaItem.file,
+              Math.max(0, localTime)
+            );
+            framesByMediaId.set(mediaItem.id, frame);
+          }
           if (frame) {
             const mediaW = Math.max(1, mediaItem.width || canvasWidth);
             const mediaH = Math.max(1, mediaItem.height || canvasHeight);
@@ -166,12 +176,15 @@ export async function renderTimelineFrame({
       if (mediaItem.type === "video") {
         try {
           const localTime = time - element.startTime + element.trimStart;
-
-          const frame = await videoCache.getFrameAt(
-            mediaItem.id,
-            mediaItem.file,
-            localTime
-          );
+          let frame = framesByMediaId.get(mediaItem.id) ?? null;
+          if (frame === undefined || frame === null) {
+            frame = await videoCache.getFrameAt(
+              mediaItem.id,
+              mediaItem.file,
+              Math.max(0, localTime)
+            );
+            framesByMediaId.set(mediaItem.id, frame);
+          }
           if (!frame) continue;
 
           const mediaW = Math.max(1, mediaItem.width || canvasWidth);
@@ -274,6 +287,12 @@ export async function renderTimelineFrame({
       }
       ctx.fillText(text.content, 0, 0);
       ctx.restore();
+    }
+  }
+
+  for (const [mediaId, frame] of framesByMediaId) {
+    if (frame) {
+      videoCache.releaseFrame(mediaId, frame);
     }
   }
 }

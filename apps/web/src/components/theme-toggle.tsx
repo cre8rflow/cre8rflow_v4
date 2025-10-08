@@ -9,17 +9,23 @@ interface ThemeToggleProps {
 }
 
 export function ThemeToggle({ className }: ThemeToggleProps) {
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
+  const isLight = resolvedTheme === "light";
 
   return (
     <Button
       size="icon"
       variant="text"
       className="h-7"
-      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+      onClick={() => setTheme(isLight ? "dark" : "light")}
+      aria-pressed={isLight}
+      aria-label={isLight ? "Switch to dark mode" : "Switch to light mode"}
     >
-      <Sun className="!size-[1.1rem]" />
-      <span className="sr-only">{theme === "dark" ? "Light" : "Dark"}</span>
+      {isLight ? (
+        <Moon className="!size-[1.1rem]" />
+      ) : (
+        <Sun className="!size-[1.1rem]" />
+      )}
     </Button>
   );
 }

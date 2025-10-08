@@ -52,6 +52,8 @@ interface PanelState extends PanelSizes {
   resetCounter: number;
 
   mediaViewMode: "grid" | "list";
+  isMediaPanelOpen: boolean;
+  isAgentPanelOpen: boolean;
 
   setToolsPanel: (size: number) => void;
   setPreviewPanel: (size: number) => void;
@@ -59,6 +61,11 @@ interface PanelState extends PanelSizes {
   setMainContent: (size: number) => void;
   setTimeline: (size: number) => void;
   setMediaViewMode: (mode: "grid" | "list") => void;
+
+  setMediaPanelOpen: (open: boolean) => void;
+  toggleMediaPanel: () => void;
+  setAgentPanelOpen: (open: boolean) => void;
+  toggleAgentPanel: () => void;
 
   setActivePreset: (preset: PanelPreset) => void;
   resetPreset: (preset: PanelPreset) => void;
@@ -79,6 +86,8 @@ export const usePanelStore = create<PanelState>()(
       resetCounter: 0,
 
       mediaViewMode: "grid" as const,
+      isMediaPanelOpen: true,
+      isAgentPanelOpen: true,
 
       setToolsPanel: (size) => {
         const { activePreset, presetCustomSizes } = get();
@@ -146,6 +155,13 @@ export const usePanelStore = create<PanelState>()(
         });
       },
       setMediaViewMode: (mode) => set({ mediaViewMode: mode }),
+
+      setMediaPanelOpen: (open) => set({ isMediaPanelOpen: open }),
+      toggleMediaPanel: () =>
+        set((state) => ({ isMediaPanelOpen: !state.isMediaPanelOpen })),
+      setAgentPanelOpen: (open) => set({ isAgentPanelOpen: open }),
+      toggleAgentPanel: () =>
+        set((state) => ({ isAgentPanelOpen: !state.isAgentPanelOpen })),
 
       setActivePreset: (preset) => {
         const {

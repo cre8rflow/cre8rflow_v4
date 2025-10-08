@@ -66,6 +66,8 @@ export function Captions() {
       const encryptedBlob = new Blob([encryptionResult.encryptedData]);
 
       setProcessingStep("Uploading...");
+
+      // Direct browser upload via presigned URL (requires R2 CORS to be configured)
       const uploadResponse = await fetch("/api/get-upload-url", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -73,17 +75,20 @@ export function Captions() {
       });
 
       if (!uploadResponse.ok) {
-        const error = await uploadResponse.json();
+        const error = await uploadResponse.json().catch(() => ({}) as any);
         throw new Error(error.message || "Failed to get upload URL");
       }
 
       const { uploadUrl, fileName } = await uploadResponse.json();
 
-      // Upload to R2
-      await fetch(uploadUrl, {
+      // Upload to R2 (no custom headers so it matches the presign)
+      const putResp = await fetch(uploadUrl, {
         method: "PUT",
         body: encryptedBlob,
       });
+      if (!putResp.ok) {
+        throw new Error(`Upload failed: ${putResp.status}`);
+      }
 
       setProcessingStep("Transcribing...");
 
@@ -188,7 +193,10 @@ export function Captions() {
   };
 
   return (
-    <BaseView ref={containerRef} className="flex flex-col justify-between h-full">
+    <BaseView
+      ref={containerRef}
+      className="flex flex-col justify-between h-full"
+    >
       <PropertyGroup title="Language">
         <LanguageSelect
           selectedCountry={selectedCountry}
@@ -227,7 +235,7 @@ export function Captions() {
                 <Shield className="h-5 w-5" />
                 Audio Processing Notice
               </DialogTitle>
-              <DialogDescription className="space-y-3">
+              <div className="text-sm text-muted-foreground space-y-3">
                 <p>
                   To generate captions, we need to process your timeline audio
                   using speech-to-text technology.
@@ -273,7 +281,7 @@ export function Captions() {
                   anywhere. It's cryptographically impossible for us, our cloud
                   providers, or anyone else to decrypt your audio files.
                 </p>
-              </DialogDescription>
+              </div>
             </DialogHeader>
             <DialogFooter className="gap-2">
               <Button

@@ -131,13 +131,13 @@ export function TextProperties({
         label: t.label,
         content:
           t.value === "transform" ? (
-            <div className="space-y-6"></div>
+            <div className="space-y-6" />
           ) : (
             <div className="space-y-6">
               <Textarea
                 placeholder="Name"
                 defaultValue={element.content}
-                className="min-h-18 resize-none bg-panel-accent"
+                className="min-h-18 resize-none bg-surface-base/70 border border-border/40 focus-visible:ring-primary/50"
                 onChange={(e) =>
                   updateTextElement(trackId, element.id, {
                     content: e.target.value,
@@ -258,7 +258,7 @@ export function TextProperties({
                       max={300}
                       onChange={(e) => handleFontSizeChange(e.target.value)}
                       onBlur={handleFontSizeBlur}
-                      className="w-12 px-2 !text-xs h-7 rounded-sm text-center bg-panel-accent
+                      className="w-12 px-2 !text-xs h-7 rounded-sm text-center bg-surface-base/70 border border-border/40 focus-visible:ring-primary/50
                [appearance:textfield]
                [&::-webkit-outer-spin-button]:appearance-none
                [&::-webkit-inner-spin-button]:appearance-none"
@@ -306,7 +306,7 @@ export function TextProperties({
                       max={100}
                       onChange={(e) => handleOpacityChange(e.target.value)}
                       onBlur={handleOpacityBlur}
-                      className="w-12 !text-xs h-7 rounded-sm text-center bg-panel-accent
+                      className="w-12 !text-xs h-7 rounded-sm text-center bg-surface-base/70 border border-border/40 focus-visible:ring-primary/50
                [appearance:textfield]
                [&::-webkit-outer-spin-button]:appearance-none
                [&::-webkit-inner-spin-button]:appearance-none"

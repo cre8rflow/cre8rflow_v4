@@ -17,7 +17,7 @@ export function Header() {
         width={32}
         height={32}
       />
-      <span className="text-xl font-medium hidden md:block">OpenCut</span>
+      <span className="text-xl font-medium hidden md:block">Kallio</span>
     </Link>
   );
 
