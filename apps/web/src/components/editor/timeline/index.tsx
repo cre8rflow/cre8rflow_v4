@@ -1,36 +1,15 @@
 "use client";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Button } from "../../ui/button";
 import {
-  Scissors,
-  ArrowLeftToLine,
-  ArrowRightToLine,
-  Trash2,
-  Snowflake,
-  Copy,
-  SplitSquareHorizontal,
-  Pause,
-  Play,
-  SkipBack,
   Video,
   Music,
   TypeIcon,
-  Magnet,
-  Link,
-  ZoomIn,
-  ZoomOut,
   Bookmark,
   Eye,
   VolumeOff,
   Volume2,
 } from "lucide-react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-  TooltipProvider,
-} from "../../ui/tooltip";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -67,9 +46,6 @@ import {
   TIMELINE_CONSTANTS,
   snapTimeToFrame,
 } from "@/constants/timeline-constants";
-import { Slider } from "@/components/ui/slider";
-import { formatTimeCode } from "@/lib/time";
-import { EditableTimecode } from "@/components/ui/editable-timecode";
 import { TimelineToolbar } from "./timeline-toolbar";
 import { TimelineCommandStatusBar } from "./timeline-command-status";
 import { useActiveTimelineCommands } from "@/stores/timeline-command-store";

@@ -30,5 +30,9 @@ node_modules
 bun.lockb
 apps/transcription/__pycache__
 apps/transcription/env
+/.cursor
 
 apps/bg-remover/env
+
+# vscode
+/.vscode
