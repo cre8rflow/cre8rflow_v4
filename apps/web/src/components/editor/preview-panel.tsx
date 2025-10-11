@@ -18,6 +18,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
+import type { CSSProperties } from "react";
 import { renderTimelineFrame } from "@/lib/timeline-renderer";
 import { cn } from "@/lib/utils";
 import { formatTimeCode } from "@/lib/time";
@@ -48,8 +49,17 @@ interface ActiveElement {
   mediaItem: MediaFile | null;
 }
 
+interface PreviewTextEditState {
+  trackId: string;
+  elementId: string;
+  value: string;
+  originalValue: string;
+  selectAllOnFocus: boolean;
+}
+
 export function PreviewPanel() {
-  const { tracks, getTotalDuration, updateTextElement } = useTimelineStore();
+  const { tracks, getTotalDuration, updateTextElement, selectElement, selectedElements } =
+    useTimelineStore();
   const { mediaFiles } = useMediaStore();
   const { currentTime, toggle, setCurrentTime } = usePlaybackStore();
   const { isPlaying, volume, muted } = usePlaybackStore();
@@ -94,6 +104,58 @@ export function PreviewPanel() {
     elementWidth: 0,
     elementHeight: 0,
   });
+  const [previewTextEdit, setPreviewTextEdit] =
+    useState<PreviewTextEditState | null>(null);
+  const previewTextEditRef = useRef<PreviewTextEditState | null>(null);
+  const previewEditorRef = useRef<HTMLTextAreaElement | null>(null);
+  const skipPreviewCommitRef = useRef(false);
+  useEffect(() => {
+    previewTextEditRef.current = previewTextEdit;
+  }, [previewTextEdit]);
+
+  useEffect(() => {
+    if (!previewTextEdit) return;
+    requestAnimationFrame(() => {
+      const node = previewEditorRef.current;
+      if (!node) return;
+      node.focus();
+      if (previewTextEdit.selectAllOnFocus) {
+        node.select();
+        const updated: PreviewTextEditState = {
+          ...previewTextEdit,
+          selectAllOnFocus: false,
+        };
+        previewTextEditRef.current = updated;
+        setPreviewTextEdit(updated);
+      } else {
+        const end = node.value.length;
+        node.setSelectionRange(end, end);
+      }
+    });
+  }, [previewTextEdit]);
+
+  useEffect(() => {
+    if (!previewTextEdit) return;
+    const track = tracks.find((t) => t.id === previewTextEdit.trackId);
+    const element = track?.elements.find(
+      (el) => el.id === previewTextEdit.elementId
+    );
+    if (!track || !element || element.type !== "text") {
+      setPreviewTextEdit(null);
+      previewTextEditRef.current = null;
+      return;
+    }
+    const currentContent = element.content ?? "";
+    if (currentContent !== previewTextEdit.value) {
+      const updated: PreviewTextEditState = {
+        ...previewTextEdit,
+        value: currentContent,
+        selectAllOnFocus: false,
+      };
+      previewTextEditRef.current = updated;
+      setPreviewTextEdit(updated);
+    }
+  }, [tracks, previewTextEdit]);
 
   useEffect(() => {
     const updatePreviewSize = () => {
@@ -296,6 +358,87 @@ export function PreviewPanel() {
       elementHeight: rect.height,
     });
   };
+
+  const startPreviewTextEdit = useCallback(
+    (trackId: string, elementId: string) => {
+      const track = tracks.find((t) => t.id === trackId);
+      const element = track?.elements.find((el) => el.id === elementId);
+      if (!track || !element || element.type !== "text") return;
+
+      selectElement(trackId, elementId);
+      const state: PreviewTextEditState = {
+        trackId,
+        elementId,
+        value: element.content,
+        originalValue: element.content,
+        selectAllOnFocus: true,
+      };
+      previewTextEditRef.current = state;
+      setPreviewTextEdit(state);
+      skipPreviewCommitRef.current = false;
+    },
+    [tracks, selectElement]
+  );
+
+  const handlePreviewTextChange = useCallback(
+    (value: string) => {
+      const current = previewTextEditRef.current;
+      if (!current) return;
+
+      previewTextEditRef.current = { ...current, value, selectAllOnFocus: false };
+      setPreviewTextEdit((prev) => {
+        if (!prev) return prev;
+        if (prev.trackId === current.trackId && prev.elementId === current.elementId) {
+          const updated = { ...prev, value, selectAllOnFocus: false };
+          return updated;
+        }
+        return prev;
+      });
+
+      updateTextElement(
+        current.trackId,
+        current.elementId,
+        { content: value },
+        { pushHistory: false, skipSave: true }
+      );
+    },
+    [updateTextElement]
+  );
+
+  const commitPreviewTextEdit = useCallback(() => {
+    const current = previewTextEditRef.current;
+    if (!current) return;
+
+    if (current.value !== current.originalValue) {
+      updateTextElement(current.trackId, current.elementId, {
+        content: current.value,
+      });
+    }
+
+    previewTextEditRef.current = null;
+    setPreviewTextEdit(null);
+    previewEditorRef.current = null;
+    skipPreviewCommitRef.current = false;
+  }, [updateTextElement]);
+
+  const cancelPreviewTextEdit = useCallback(() => {
+    const current = previewTextEditRef.current;
+    if (!current) return;
+
+    if (current.value !== current.originalValue) {
+      updateTextElement(
+        current.trackId,
+        current.elementId,
+        { content: current.originalValue },
+        { pushHistory: false, skipSave: true }
+      );
+    }
+
+    previewTextEditRef.current = null;
+    setPreviewTextEdit(null);
+    previewEditorRef.current = null;
+    skipPreviewCommitRef.current = false;
+  }, [updateTextElement]);
 
   const toggleExpanded = useCallback(() => {
     setIsExpanded((prev) => !prev);
@@ -748,7 +891,141 @@ export function PreviewPanel() {
   const renderBlurBackground = () => null;
 
   // Render an element (canvas handles visuals now). Audio playback to be implemented via Web Audio.
-  const renderElement = (_elementData: ActiveElement) => null;
+  const renderElement = ({ element, track }: ActiveElement) => {
+    if (element.type !== "text") return null;
+
+    const scaleX = canvasSize.width
+      ? previewDimensions.width / canvasSize.width
+      : 1;
+    const scaleY = canvasSize.height
+      ? previewDimensions.height / canvasSize.height
+      : 1;
+
+    const posX = previewDimensions.width / 2 + element.x * scaleX;
+    const posY = previewDimensions.height / 2 + element.y * scaleY;
+
+    const translateX =
+      element.textAlign === "left"
+        ? "0%"
+        : element.textAlign === "right"
+          ? "-100%"
+          : "-50%";
+
+    const isSelected = selectedElements.some(
+      (sel) => sel.trackId === track.id && sel.elementId === element.id
+    );
+
+    const isEditing =
+      previewTextEdit?.trackId === track.id &&
+      previewTextEdit.elementId === element.id;
+
+    const displayValue = isEditing
+      ? previewTextEdit?.value ?? element.content
+      : element.content;
+
+    const paddingX = 8 * scaleX;
+    const paddingY = 4 * scaleX;
+
+    const baseStyle = {
+      position: "absolute" as const,
+      left: posX,
+      top: posY,
+      transform: `translate(${translateX}, -50%) rotate(${element.rotation}deg)`,
+      transformOrigin: "center center",
+      opacity: element.opacity,
+      pointerEvents: "auto" as const,
+    };
+
+    const commonTextStyle: CSSProperties = {
+      fontFamily: element.fontFamily,
+      fontSize: `${Math.max(8, element.fontSize * scaleX)}px`,
+      fontWeight: element.fontWeight,
+      fontStyle: element.fontStyle,
+      color: element.color,
+      textDecoration:
+        element.textDecoration === "none" ? undefined : element.textDecoration,
+      textAlign: element.textAlign,
+      padding: `${paddingY}px ${paddingX}px`,
+      borderRadius: `${Math.max(4, 8 * scaleX)}px`,
+      whiteSpace: "pre-wrap" as const,
+      lineHeight: 1.2,
+      minWidth: "48px",
+      backgroundColor:
+        element.backgroundColor && element.backgroundColor !== "transparent"
+          ? element.backgroundColor
+          : "transparent",
+      boxShadow: isSelected
+        ? "0 0 0 2px rgba(0, 153, 255, 0.45)"
+        : "0 8px 24px rgba(0,0,0,0.28)",
+      cursor: isEditing ? "text" : "move",
+    };
+
+    const handleDoubleClick = (event: React.MouseEvent) => {
+      event.stopPropagation();
+      startPreviewTextEdit(track.id, element.id);
+    };
+
+    const handleMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+      if (isEditing) return;
+      if (event.detail > 1) return;
+      handleTextMouseDown(event, element, track.id);
+    };
+
+    const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+      event.stopPropagation();
+      selectElement(track.id, element.id);
+    };
+
+    return (
+      <div
+        key={`${track.id}-${element.id}`}
+        style={baseStyle}
+        className={cn(
+          "transition-shadow",
+          isSelected ? "ring-2 ring-primary/70 rounded-xl" : undefined
+        )}
+        onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
+        onMouseDown={handleMouseDown}
+      >
+        {isEditing ? (
+          <textarea
+            ref={previewEditorRef}
+            value={displayValue}
+            onChange={(event) => handlePreviewTextChange(event.target.value)}
+            onBlur={() => {
+              if (skipPreviewCommitRef.current) {
+                skipPreviewCommitRef.current = false;
+                return;
+              }
+              commitPreviewTextEdit();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                skipPreviewCommitRef.current = true;
+                cancelPreviewTextEdit();
+              } else if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                commitPreviewTextEdit();
+              }
+            }}
+            spellCheck={false}
+            rows={Math.max(1, displayValue.split("\n").length)}
+            className="bg-black/70 text-white outline-none resize-none"
+            style={{
+              ...commonTextStyle,
+              width: "auto",
+              minWidth: "140px",
+              border: "1px solid rgba(255,255,255,0.3)",
+            }}
+          />
+        ) : (
+          <span style={commonTextStyle}>{displayValue}</span>
+        )}
+      </div>
+    );
+  };
 
   const {
     status: agentStatus,

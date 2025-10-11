@@ -74,10 +74,48 @@ export type ExecutedAction =
 
 const executedActions: ExecutedAction[] = [];
 
+// Queue drain waiters: resolves only after all pending steps finish processing
+const __queueDrainedWaiters: Array<() => void> = [];
+
+export function whenQueueDrained(): Promise<void> {
+  return new Promise((resolve) => {
+    __queueDrainedWaiters.push(resolve);
+  });
+}
+type SummaryMessage = {
+  text: string;
+  effect?: CommandEffect;
+};
+
+const summaryMessages: SummaryMessage[] = [];
+const SUMMARY_STREAM_DELAY_MS = 120;
+
+function recordSummaryMessage(message: string, effect?: CommandEffect): void {
+  const trimmed = message.trim();
+  if (!trimmed) return;
+  summaryMessages.push({ text: trimmed, effect });
+}
+
 function recordExecutedFromInstruction(
   instruction: AnyInstruction,
   targetCount: number
 ): void {
+  const effect =
+    instruction.type === "trim"
+      ? "trim"
+      : instruction.type === "cut-out" ||
+          instruction.type === "twelvelabs.applyCut"
+        ? "cut"
+        : instruction.type === "captions.generate"
+          ? "caption"
+          : instruction.type === "deadspace.trim"
+            ? "deadspace"
+            : undefined;
+  const friendlyCopy = getFriendlyCopyForInstruction(instruction)?.complete;
+  if (friendlyCopy) {
+    recordSummaryMessage(friendlyCopy, effect);
+  }
+
   if (instruction.type === "trim") {
     const left = instruction.sides?.left
       ? JSON.parse(JSON.stringify(instruction.sides.left))
@@ -153,6 +191,20 @@ function normalizeFriendlyLabel(raw: string | undefined, fallback: string): stri
   return cleaned || fallback;
 }
 
+function stripLeadingVerbs(subject: string, verbs: string[]): string {
+  const trimmed = subject.trim();
+  for (const verb of verbs) {
+    const pattern = new RegExp(`^${verb}\\b`, "i");
+    if (pattern.test(trimmed)) {
+      const remainder = trimmed.replace(pattern, "").trim();
+      if (remainder.length > 0) {
+        return remainder;
+      }
+    }
+  }
+  return trimmed;
+}
+
 function friendlyQueryFromInstruction(
   instruction: Extract<AnyInstruction, { type: "twelvelabs.applyCut" }>
 ): string {
@@ -189,10 +241,12 @@ function getFriendlyCopyForInstruction(
       };
     }
     case "trim": {
-      const label = normalizeFriendlyLabel(
+      const baseLabel = normalizeFriendlyLabel(
         instruction.description,
         FALLBACK_CLIP_LABEL
       );
+      const cleaned = stripLeadingVerbs(baseLabel, ["trim"]);
+      const label = cleaned || FALLBACK_CLIP_LABEL;
       return {
         pending: `Trimming ${label}...`,
         complete: `Trimmed ${label}.`,
@@ -200,10 +254,12 @@ function getFriendlyCopyForInstruction(
       };
     }
     case "captions.generate": {
-      const label = normalizeFriendlyLabel(
+      const baseLabel = normalizeFriendlyLabel(
         instruction.description,
         "captions"
       );
+      const cleaned = stripLeadingVerbs(baseLabel, ["add", "generate", "create"]);
+      const label = cleaned || "captions";
       return {
         pending: `Adding ${label}...`,
         complete: `Added ${label}.`,
@@ -230,18 +286,27 @@ export async function summarizeExecutedActions(
   actions: ExecutedAction[],
   onDelta?: (delta: string) => void
 ): Promise<string> {
-  const bullets: string[] = [];
+  const recordedEntries = getAndClearSummaryMessages();
+
+  const recordedEffects = new Set<CommandEffect>();
+  const recordedMessages = recordedEntries.map((entry) => {
+    if (entry.effect) recordedEffects.add(entry.effect);
+    return entry.text;
+  });
+
+  const bullets: Array<{ text: string; effect?: CommandEffect }> = [];
   for (const a of actions) {
     if (a.kind === "trim") {
       const left = describeTrimSide(a.sides.left, "left");
       const right = describeTrimSide(a.sides.right, "right");
       const sideText = [left, right].filter(Boolean).join(" & ");
       const targetPhrase = `${a.targetCount} clip${a.targetCount === 1 ? "" : "s"}`;
-      bullets.push(
-        sideText
+      bullets.push({
+        text: sideText
           ? `Trimmed ${sideText} on ${targetPhrase}`
-          : `Trimmed ${targetPhrase}`
-      );
+          : `Trimmed ${targetPhrase}`,
+        effect: "trim",
+      });
     } else if (a.kind === "cut") {
       const r = a.range as any;
       let rangeText = "";
@@ -257,79 +322,67 @@ export async function summarizeExecutedActions(
       } else {
         rangeText = `around playhead (${r.left ?? 0}s/${r.right ?? 0}s)`;
       }
-      const meta = a.meta;
-      const hint =
-        meta?.source === "twelvelabs" && meta?.searchSummary
-          ? ` via search${meta.searchWasQuoted ? " (quoted)" : " (no quotes)"} ${meta.searchSummary}`
-          : "";
-      bullets.push(
-        `Cut: removed ${rangeText}${hint} on ${a.targetCount} clip(s)`
-      );
+      // const meta = a.meta;
+      // const hint =
+      //   meta?.source === "twelvelabs" && meta?.searchSummary
+      //     ? ` via search${meta.searchWasQuoted ? " (quoted)" : " (no quotes)"} ${meta.searchSummary}`
+      //     : "";
+      // bullets.push({
+      //   text: `Cut: removed ${rangeText}${hint} on ${a.targetCount} clip(s)`,
+      //   effect: "cut",
+      // });
     } else if (a.kind === "captions") {
-      bullets.push("Captions: added to match spoken audio");
+      bullets.push({
+        text: "Captions: added to match spoken audio",
+        effect: "caption",
+      });
     } else if (a.kind === "deadspace") {
-      bullets.push(`Trimmed silence on ${a.targetCount} clip(s)`);
+      bullets.push({
+        text: `Trimmed silence on ${a.targetCount} clip(s)`,
+        effect: "deadspace",
+      });
     }
   }
 
-  const fallback = bullets.length
-    ? `Completed edits: ${bullets.join("; ")}.`
-    : "Made small timeline adjustments.";
-
-  // Call server route to summarize with streaming support
-  try {
-    const resp = await fetch("/api/agent/summarize", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bullets, actions }),
-    });
-
-    if (!resp.ok || !resp.body) {
-      if (onDelta) onDelta(fallback);
-      return fallback;
+  const summaryParts = recordedMessages.slice();
+  for (const bullet of bullets) {
+    if (
+      bullet.text &&
+      (bullet.effect == null || !recordedEffects.has(bullet.effect)) &&
+      !summaryParts.includes(bullet.text)
+    ) {
+      summaryParts.push(bullet.text);
     }
-
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let accumulated = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith("data: ")) continue;
-
-        try {
-          const data = JSON.parse(trimmed.slice(6));
-          if (data.event === "summary_delta" && data.delta) {
-            accumulated += data.delta;
-            if (onDelta) onDelta(data.delta);
-          } else if (data.event === "summary_done") {
-            return accumulated || fallback;
-          }
-        } catch {
-          // Ignore parse errors
-        }
-      }
-    }
-
-    return accumulated || fallback;
-  } catch {
-    if (onDelta) onDelta(fallback);
-    return fallback;
   }
+
+  if (summaryParts.length === 0) {
+    summaryParts.push("Made small timeline adjustments.");
+  }
+
+  let accumulated = "";
+  for (const part of summaryParts) {
+    const line = `${part}\n`;
+    if (onDelta) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, SUMMARY_STREAM_DELAY_MS)
+      );
+      onDelta(line);
+    }
+    accumulated += line;
+  }
+
+  return accumulated.trimEnd();
 }
 
 export function getAndClearExecutedActions(): ExecutedAction[] {
   const copy = executedActions.slice();
   executedActions.length = 0;
+  return copy;
+}
+
+export function getAndClearSummaryMessages(): SummaryMessage[] {
+  const copy = summaryMessages.slice();
+  summaryMessages.length = 0;
   return copy;
 }
 
@@ -407,6 +460,7 @@ export function startAgentStream({
   onDone?: () => void;
   onError?: (msg: string) => void;
 }): EventSource {
+  summaryMessages.length = 0;
   // Build query parameters for SSE endpoint
   const params = new URLSearchParams({
     prompt,
@@ -516,12 +570,14 @@ export function startAgentStream({
     const entry = instructionMessages.get(commandKey);
     if (!entry) return;
     instructionMessages.delete(commandKey);
+    const effect = commandRegistry.get(commandKey)?.type;
     if (outcome === "success") {
       progress.complete(entry.key, entry.copy.complete);
       logFriendlyStatus("complete", entry.copy.complete);
     } else {
       progress.fail(entry.key, entry.copy.failure);
       logFriendlyStatus("error", entry.copy.failure);
+      recordSummaryMessage(entry.copy.failure, effect);
     }
   };
 
@@ -530,6 +586,7 @@ export function startAgentStream({
       const message = reason ?? copy.failure;
       progress.fail(key, message);
       logFriendlyStatus("error", message);
+      recordSummaryMessage(message);
     });
     instructionMessages.clear();
   };
@@ -737,6 +794,11 @@ export function startAgentStream({
             });
             activeCommands.clear();
             commandRegistry.clear();
+            // Notify any listeners waiting for the processing queue to drain
+            while (__queueDrainedWaiters.length) {
+              const resolve = __queueDrainedWaiters.shift();
+              if (resolve) resolve();
+            }
             onDone?.();
             eventSource.close();
           };

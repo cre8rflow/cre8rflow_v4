@@ -33,12 +33,18 @@ export function TimelineTrackContent({
   onSnapPointChange,
   rulerScrollRef,
   tracksScrollRef,
+  onTextElementDoubleClick,
 }: {
   track: TimelineTrack;
   zoomLevel: number;
   onSnapPointChange?: (snapPoint: SnapPoint | null) => void;
   rulerScrollRef: React.RefObject<HTMLDivElement>;
   tracksScrollRef: React.RefObject<HTMLDivElement>;
+  onTextElementDoubleClick?: (
+    event: React.MouseEvent,
+    trackId: string,
+    elementId: string
+  ) => void;
 }) {
   const { mediaFiles } = useMediaStore();
   const {
@@ -1194,6 +1200,16 @@ export function TimelineTrackContent({
                   isSelected={isSelected}
                   onElementMouseDown={handleElementMouseDown}
                   onElementClick={handleElementClick}
+                  onElementDoubleClick={
+                    element.type === "text"
+                      ? (event) =>
+                          onTextElementDoubleClick?.(
+                            event,
+                            track.id,
+                            element.id
+                          )
+                      : undefined
+                  }
                 />
               );
             })}

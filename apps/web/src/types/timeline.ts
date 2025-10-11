@@ -54,6 +54,10 @@ export interface TimelineElementProps {
   isSelected: boolean;
   onElementMouseDown: (e: React.MouseEvent, element: TimelineElement) => void;
   onElementClick: (e: React.MouseEvent, element: TimelineElement) => void;
+  onElementDoubleClick?: (
+    e: React.MouseEvent,
+    element: TimelineElement
+  ) => void;
 }
 
 export interface ResizeState {

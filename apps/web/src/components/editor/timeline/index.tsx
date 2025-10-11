@@ -46,7 +46,15 @@ import { useTimelineZoom } from "@/hooks/use-timeline-zoom";
 import { processMediaFiles } from "@/lib/media-processing";
 
 import { toast } from "sonner";
-import { useState, useRef, useEffect, useCallback } from "react";
+import {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  useLayoutEffect,
+} from "react";
+import type { CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { TimelineTrackContent } from "./timeline-track";
 import {
   TimelinePlayhead,
@@ -75,6 +83,14 @@ import { TimelineCommandStatusBar } from "./timeline-command-status";
 import { useActiveTimelineCommands } from "@/stores/timeline-command-store";
 import { cn } from "@/lib/utils";
 
+interface TimelineTextEditState {
+  trackId: string;
+  elementId: string;
+  value: string;
+  originalValue: string;
+  selectAllOnFocus: boolean;
+}
+
 export function Timeline() {
   // Timeline shows all tracks (video, audio, effects) and their elements.
   // You can drag media here to add it to your project.
@@ -88,7 +104,11 @@ export function Timeline() {
     setSelectedElements,
     toggleTrackMute,
     dragState,
+    selectElement,
   } = useTimelineStore();
+  const updateTextElement = useTimelineStore(
+    (state) => state.updateTextElement
+  );
   const { mediaFiles, addMediaFile } = useMediaStore();
   const { activeProject } = useProjectStore();
   const { currentTime, duration, seek, setDuration } = usePlaybackStore();
@@ -102,6 +122,207 @@ export function Timeline() {
 
   const activeCommands = useActiveTimelineCommands();
   const isTimelineProcessing = activeCommands.length > 0;
+
+  const [textEditState, setTextEditState] =
+    useState<TimelineTextEditState | null>(null);
+  const textEditStateRef = useRef<TimelineTextEditState | null>(null);
+  useEffect(() => {
+    textEditStateRef.current = textEditState;
+  }, [textEditState]);
+
+  const openTextEditor = useCallback(
+    (
+      trackId: string,
+      elementId: string,
+      options?: { initialDraft?: string; selectAllOnFocus?: boolean }
+    ) => {
+      const store = useTimelineStore.getState();
+      const track = store.tracks.find((t) => t.id === trackId);
+      const element = track?.elements.find((el) => el.id === elementId);
+      if (!track || !element || element.type !== "text") return;
+
+      selectElement(trackId, elementId);
+
+      const originalContent = element.content ?? "";
+      const draft =
+        options && "initialDraft" in options && options.initialDraft !== undefined
+          ? options.initialDraft
+          : originalContent;
+      const selectAllOnFocus =
+        options?.selectAllOnFocus ??
+        (options?.initialDraft === undefined || options.initialDraft === null);
+
+      const nextState: TimelineTextEditState = {
+        trackId,
+        elementId,
+        value: draft,
+        originalValue: originalContent,
+        selectAllOnFocus,
+      };
+
+      if (draft !== originalContent) {
+        updateTextElement(
+          trackId,
+          elementId,
+          { content: draft },
+          { pushHistory: false, skipSave: true }
+        );
+      }
+
+      textEditStateRef.current = nextState;
+      setTextEditState(nextState);
+    },
+    [selectElement, updateTextElement]
+  );
+
+  const handleTextEditChange = useCallback(
+    (nextValue: string) => {
+      const current = textEditStateRef.current;
+      if (!current) return;
+      updateTextElement(
+        current.trackId,
+        current.elementId,
+        { content: nextValue },
+        { pushHistory: false, skipSave: true }
+      );
+      setTextEditState((prev) => {
+        if (!prev) return prev;
+        const updated = {
+          ...prev,
+          value: nextValue,
+          selectAllOnFocus: false,
+        };
+        textEditStateRef.current = updated;
+        return updated;
+      });
+    },
+    [updateTextElement]
+  );
+
+  const commitTextEdit = useCallback(() => {
+    const current = textEditStateRef.current;
+    if (!current) return;
+    if (current.value !== current.originalValue) {
+      updateTextElement(current.trackId, current.elementId, {
+        content: current.value,
+      });
+    }
+    setTextEditState(null);
+    textEditStateRef.current = null;
+  }, [updateTextElement]);
+
+  const cancelTextEdit = useCallback(() => {
+    const current = textEditStateRef.current;
+    if (!current) return;
+    if (current.value !== current.originalValue) {
+      updateTextElement(
+        current.trackId,
+        current.elementId,
+        { content: current.originalValue },
+        { pushHistory: false, skipSave: true }
+      );
+    }
+    setTextEditState(null);
+    textEditStateRef.current = null;
+  }, [updateTextElement]);
+
+  const handleTextEditorSelectionHandled = useCallback(() => {
+    setTextEditState((prev) => {
+      if (!prev || !prev.selectAllOnFocus) return prev;
+      const updated = { ...prev, selectAllOnFocus: false };
+      textEditStateRef.current = updated;
+      return updated;
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const activeElement = document.activeElement as HTMLElement | null;
+      if (
+        activeElement &&
+        (activeElement.tagName === "INPUT" ||
+          activeElement.tagName === "TEXTAREA" ||
+          activeElement.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (textEditStateRef.current) {
+        return;
+      }
+
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+
+      const store = useTimelineStore.getState();
+      const selected = store.selectedElements;
+      if (selected.length !== 1) return;
+
+      const { trackId, elementId } = selected[0];
+      const track = store.tracks.find((t) => t.id === trackId);
+      const element = track?.elements.find((el) => el.id === elementId);
+      if (!element || element.type !== "text") return;
+
+      if (event.key.length === 1) {
+        event.preventDefault();
+        openTextEditor(trackId, elementId, {
+          initialDraft: event.key,
+          selectAllOnFocus: false,
+        });
+        return;
+      }
+
+      if (event.key === "Backspace") {
+        event.preventDefault();
+        openTextEditor(trackId, elementId, {
+          initialDraft: "",
+          selectAllOnFocus: false,
+        });
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        openTextEditor(trackId, elementId, { selectAllOnFocus: true });
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [openTextEditor]);
+
+  useEffect(() => {
+    if (!textEditState) return;
+    const track = tracks.find((t) => t.id === textEditState.trackId);
+    const element = track?.elements.find(
+      (el) => el.id === textEditState.elementId
+    );
+    if (!track || !element || element.type !== "text") {
+      setTextEditState(null);
+      textEditStateRef.current = null;
+      return;
+    }
+    const currentContent = element.content ?? "";
+    if (currentContent !== textEditState.value) {
+      const updated: TimelineTextEditState = {
+        ...textEditState,
+        value: currentContent,
+        selectAllOnFocus: false,
+      };
+      textEditStateRef.current = updated;
+      setTextEditState(updated);
+    }
+  }, [tracks, textEditState]);
+
+  const handleTextElementDoubleClick = useCallback(
+    (event: React.MouseEvent, trackId: string, elementId: string) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openTextEditor(trackId, elementId, { selectAllOnFocus: true });
+    },
+    [openTextEditor]
+  );
 
   // Track mouse down/up for distinguishing clicks from drag/resize ends
   const mouseTrackingRef = useRef({
@@ -624,26 +845,27 @@ export function Timeline() {
   }, []);
 
   return (
-    <div className="flex h-full flex-col gap-3 rounded-3xl border border-border/40 bg-surface-base p-4 shadow-soft">
-      <TimelineToolbar zoomLevel={zoomLevel} setZoomLevel={setZoomLevel} />
+    <>
+      <div className="flex h-full flex-col gap-3 rounded-3xl border border-border/40 bg-surface-base p-4 shadow-soft">
+        <TimelineToolbar zoomLevel={zoomLevel} setZoomLevel={setZoomLevel} />
 
-      <div
-        className="relative flex-1 overflow-hidden rounded-2xl border border-border/30 bg-surface-base/70"
-        {...dragProps}
-        onMouseEnter={() => setIsInTimeline(true)}
-        onMouseLeave={() => setIsInTimeline(false)}
-      >
-        <TimelineCommandStatusBar commands={activeCommands} />
-        {isDragOver && (
-          <div className="pointer-events-none absolute inset-0 z-20 rounded-2xl border-2 border-primary/50 bg-primary/10 backdrop-blur-sm" />
-        )}
         <div
-          className={cn(
-            "flex h-full flex-col overflow-hidden relative",
-            isTimelineProcessing ? "timeline-processing-active" : undefined
-          )}
-          ref={timelineRef}
+          className="relative flex-1 overflow-hidden rounded-2xl border border-border/30 bg-surface-base/70"
+          {...dragProps}
+          onMouseEnter={() => setIsInTimeline(true)}
+          onMouseLeave={() => setIsInTimeline(false)}
         >
+          <TimelineCommandStatusBar commands={activeCommands} />
+          {isDragOver && (
+            <div className="pointer-events-none absolute inset-0 z-20 rounded-2xl border-2 border-primary/50 bg-primary/10 backdrop-blur-sm" />
+          )}
+          <div
+            className={cn(
+              "flex h-full flex-col overflow-hidden relative",
+              isTimelineProcessing ? "timeline-processing-active" : undefined
+            )}
+            ref={timelineRef}
+          >
           {isTimelineProcessing && <div className="timeline-processing-dim" />}
           <TimelinePlayhead
             currentTime={currentTime}
@@ -914,6 +1136,9 @@ export function Timeline() {
                                 onSnapPointChange={handleSnapPointChange}
                                 rulerScrollRef={rulerScrollRef}
                                 tracksScrollRef={tracksScrollRef}
+                                onTextElementDoubleClick={
+                                  handleTextElementDoubleClick
+                                }
                               />
                             </div>
                           </ContextMenuTrigger>
@@ -943,7 +1168,162 @@ export function Timeline() {
         </div>
       </div>
     </div>
+    <TimelineTextEditorOverlay
+      state={textEditState}
+      onChange={handleTextEditChange}
+      onCommit={commitTextEdit}
+      onCancel={cancelTextEdit}
+      onSelectionHandled={handleTextEditorSelectionHandled}
+    />
+  </>
   );
+}
+
+function TimelineTextEditorOverlay({
+  state,
+  onChange,
+  onCommit,
+  onCancel,
+  onSelectionHandled,
+}: {
+  state: TimelineTextEditState | null;
+  onChange: (value: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+  onSelectionHandled?: () => void;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const skipCommitRef = useRef(false);
+  const [position, setPosition] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
+
+  const updatePosition = useCallback(() => {
+    if (!state) {
+      setPosition(null);
+      return;
+    }
+
+    const selector = `[data-element-id="${state.elementId}"][data-track-id="${state.trackId}"]`;
+    const element = document.querySelector(selector) as HTMLElement | null;
+    if (!element) {
+      setPosition(null);
+      return;
+    }
+
+    const rect = element.getBoundingClientRect();
+    setPosition({
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+    });
+  }, [state]);
+
+  useLayoutEffect(() => {
+    if (!state) return;
+    updatePosition();
+
+    const handleScroll = () => updatePosition();
+    window.addEventListener("resize", updatePosition);
+    document.addEventListener("scroll", handleScroll, true);
+
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      document.removeEventListener("scroll", handleScroll, true);
+    };
+  }, [state, updatePosition]);
+
+  useEffect(() => {
+    if (!state) return;
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    requestAnimationFrame(() => {
+      const node = textareaRef.current;
+      if (!node) return;
+      if (state.selectAllOnFocus) {
+        node.select();
+        onSelectionHandled?.();
+      } else {
+        const end = node.value.length;
+        node.setSelectionRange(end, end);
+      }
+      node.focus();
+    });
+  }, [state, onSelectionHandled]);
+
+  if (!state) {
+    return null;
+  }
+
+  const resolvedPosition = position ?? {
+    left: window.innerWidth / 2 - 150,
+    top: window.innerHeight / 2 - 50,
+    width: 300,
+    height: 80,
+  };
+
+  const style: CSSProperties = {
+    position: "fixed",
+    left: resolvedPosition.left - 12,
+    top: resolvedPosition.top - 12,
+    width: Math.max(resolvedPosition.width + 24, 220),
+    minHeight: Math.max(resolvedPosition.height + 24, 60),
+    zIndex: 1000,
+    pointerEvents: "auto",
+  };
+
+  const textareaStyle: CSSProperties = {
+    width: "100%",
+    height: "100%",
+    resize: "none",
+    fontSize: "14px",
+    lineHeight: 1.4,
+    padding: "12px",
+    borderRadius: "12px",
+    border: "1px solid rgba(255,255,255,0.2)",
+    backgroundColor: "rgba(22,22,22,0.92)",
+    color: "#fff",
+    boxShadow: "0 12px 30px rgba(0,0,0,0.35)",
+    outline: "none",
+  };
+
+  const overlay = (
+    <div style={style} className="pointer-events-auto">
+      <textarea
+        ref={textareaRef}
+        value={state.value}
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={() => {
+          if (skipCommitRef.current) {
+            skipCommitRef.current = false;
+            return;
+          }
+          onCommit();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            skipCommitRef.current = true;
+            onCancel();
+          } else if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            onCommit();
+          }
+        }}
+        style={textareaStyle}
+        spellCheck={false}
+        autoFocus
+        placeholder="Edit text"
+      />
+    </div>
+  );
+
+  return createPortal(overlay, document.body);
 }
 
 function TrackIcon({ track }: { track: TimelineTrack }) {

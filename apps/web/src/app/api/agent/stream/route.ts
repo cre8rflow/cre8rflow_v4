@@ -178,31 +178,33 @@ export async function GET(request: NextRequest) {
         });
 
         // Start with planning log
-        const aiFirst = env.AGENT_PLANNER_FALLBACK === "false";
         safeSend({ event: "log", message: `Planning for: ${prompt}` });
         safeSend({
           event: "log",
-          message: `Planner mode: ${aiFirst ? "AI-first (no fallback)" : "AI+fallback"}`,
+          message: "Planner mode: OpenAI (LLM only)",
         });
-        if (env.OPENAI_API_KEY) {
-          const model = env.OPENAI_MODEL || "gpt-4o-mini";
-          const configured = env.OPENAI_RESP_FORMAT || "json_object";
-          const effective =
-            configured === "json_schema"
-              ? "json_object (downgraded)"
-              : configured;
+        if (!env.OPENAI_API_KEY) {
           safeSend({
-            event: "log",
-            message: `Calling OpenAI model: ${model} (response_format=${effective})`,
+            event: "error",
+            message: "OpenAI API key not configured. Please add OPENAI_API_KEY to continue.",
           });
-        } else {
-          safeSend({
-            event: "log",
-            message: "No OPENAI_API_KEY set; using heuristic.",
-          });
+          thoughtAbort.abort();
+          if (!thoughtDone) {
+            safeSend({ event: "thought_done" });
+          }
+          safeClose();
+          return;
         }
+        const model = env.OPENAI_MODEL || "gpt-4o-mini";
+        const configured = env.OPENAI_RESP_FORMAT || "json_object";
+        const effective =
+          configured === "json_schema" ? "json_object (downgraded)" : configured;
+        safeSend({
+          event: "log",
+          message: `Calling OpenAI model: ${model} (response_format=${effective})`,
+        });
 
-        // Call planner (OpenAI if configured, else fallback heuristics)
+        // Call planner (OpenAI LLM)
         planInstructions({ prompt, metadata })
           .then(async (result) => {
             if (!result.ok) {
@@ -333,12 +335,23 @@ export async function GET(request: NextRequest) {
               });
             }
 
+            const captionQueue: typeof instructions = [];
+            const orderedInstructions: typeof instructions = [];
+            for (const step of instructions) {
+              if (step?.type === "captions.generate") {
+                captionQueue.push(step);
+              } else {
+                orderedInstructions.push(step);
+              }
+            }
+            orderedInstructions.push(...captionQueue);
+
             safeSend({
               event: "log",
-              message: `Planned ${instructions.length} step(s)`,
+              message: `Planned ${orderedInstructions.length} step(s)`,
             });
 
-            if (instructions.length === 0) {
+            if (orderedInstructions.length === 0) {
               thoughtAbort.abort();
               if (!thoughtDone) {
                 safeSend({ event: "thought_done" });
@@ -370,12 +383,12 @@ export async function GET(request: NextRequest) {
             }
 
             // Stream each planned step
-            for (let i = 0; i < instructions.length; i++) {
+            for (let i = 0; i < orderedInstructions.length; i++) {
               safeSend({
                 event: "step",
                 stepIndex: i,
-                totalSteps: instructions.length,
-                instruction: instructions[i],
+                totalSteps: orderedInstructions.length,
+                instruction: orderedInstructions[i],
               });
             }
 

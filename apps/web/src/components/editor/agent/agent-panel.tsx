@@ -172,6 +172,11 @@ export function AgentPanel() {
               await exec.whenAsyncIdle();
 
               const mod = await import("@/lib/agent-client");
+              // Ensure the client-side step queue has fully drained so
+              // all executed actions (e.g., subsequent trims) are recorded
+              if (typeof mod.whenQueueDrained === "function") {
+                await mod.whenQueueDrained();
+              }
               const actions = mod.getAndClearExecutedActions();
 
               let accumulated = "";
