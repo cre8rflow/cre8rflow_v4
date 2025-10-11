@@ -643,6 +643,100 @@ function normalizePlannedSteps(
     return step;
   });
 
+  if (lastSeconds !== undefined) {
+    const deltaTolerance = Math.max(0.2, lastSeconds * 0.15);
+    const convertTailCutToTrim = (
+      step: Extract<AnyInstruction, { type: "cut-out" }>
+    ): AnyInstruction => {
+      const trimTarget: TargetSpec = referencesEachClip
+        ? {
+            kind: "clipsOverlappingRange",
+            start: 0,
+            end: 1e9,
+            track: "media",
+          }
+        : { kind: "lastClip", track: "media" };
+
+      const baseOptions = step.options
+        ? {
+            pushHistory: step.options?.pushHistory,
+            showToast: step.options?.showToast,
+            clamp: step.options?.clamp,
+            dryRun: step.options?.dryRun,
+            precision: step.options?.precision,
+          }
+        : undefined;
+
+      return {
+        type: "trim",
+        target: trimTarget,
+        sides: { right: { mode: "deltaSeconds", delta: lastSeconds } },
+        options: baseOptions,
+        description:
+          (step as any).description ??
+          (referencesEachClip
+            ? `Trim ${formatSeconds(lastSeconds)}s from each clip`
+            : `Trim ${formatSeconds(lastSeconds)}s from the last clip`),
+      } as AnyInstruction;
+    };
+
+    normalizedSteps = normalizedSteps.map((step) => {
+      if (step.type !== "cut-out") return step;
+
+      let rangeDuration: number | null = null;
+      switch (step.range.mode) {
+        case "aroundPlayhead": {
+          rangeDuration = step.range.left + step.range.right;
+          break;
+        }
+        case "globalSeconds":
+        case "elementSeconds": {
+          rangeDuration = Math.abs(step.range.end - step.range.start);
+          break;
+        }
+        default:
+          rangeDuration = null;
+      }
+
+      if (
+        rangeDuration == null
+      ) {
+        return step;
+      }
+
+      const matchesLastSeconds =
+        Math.abs(rangeDuration - lastSeconds) <= deltaTolerance;
+
+      const tailTargetKinds = new Set([
+        "lastClip",
+        "clipAtPlayhead",
+        "nthClip",
+        "clipsOverlappingRange",
+      ]);
+      const targetKind = step.target?.kind;
+      const targetSuggestsTail =
+        targetKind && tailTargetKinds.has(targetKind) && !explicitRange;
+
+      const targetSpan =
+        step.target?.kind === "clipsOverlappingRange"
+          ? Math.abs(step.target.end - step.target.start)
+          : undefined;
+
+      const coversEntireTarget =
+        !explicitRange &&
+        targetSpan !== undefined &&
+        targetSpan > 0 &&
+        Math.abs(rangeDuration - targetSpan) <=
+          Math.max(0.5, targetSpan * 0.05);
+
+      if (!matchesLastSeconds && !coversEntireTarget && !targetSuggestsTail) {
+        return step;
+      }
+
+      return convertTailCutToTrim(step);
+    });
+  }
+
   if (simpleRangeCutRequest && explicitRange) {
     const { start, end } = explicitRange;
     let cutOutFound = false;

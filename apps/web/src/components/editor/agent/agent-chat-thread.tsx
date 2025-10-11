@@ -1,11 +1,41 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { ChatMessage } from "@/stores/agent-ui-store";
+import type {
+  ChatMessage,
+  ChatIcon,
+  AgentProgressStatus,
+} from "@/stores/agent-ui-store";
 import { useAgentUIStore } from "@/stores/agent-ui-store";
 import { cn } from "@/lib/utils";
-import { ChevronRight, ChevronDown } from "lucide-react";
+import {
+  ChevronRight,
+  ChevronDown,
+  BadgeCheck,
+  MessageCircleX,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+
+function renderLogIcon(icon?: ChatIcon, status?: AgentProgressStatus) {
+  if (!icon) return null;
+  if (icon === "badge-check") {
+    const isPending = status === "pending";
+    return (
+      <BadgeCheck
+        className={cn(
+          "h-4 w-4 shrink-0",
+          isPending ? "text-emerald-200/70" : "text-emerald-400"
+        )}
+      />
+    );
+  }
+  if (icon === "message-circle-x") {
+    return (
+      <MessageCircleX className="h-4 w-4 shrink-0 text-red-400" />
+    );
+  }
+  return null;
+}
 
 export function AgentChatThread({ messages }: { messages: ChatMessage[] }) {
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -120,6 +150,16 @@ export function AgentChatThread({ messages }: { messages: ChatMessage[] }) {
           );
         }
 
+        const systemContent =
+          isSystem && m.icon ? (
+            <div className="flex items-center gap-2">
+              <span className="flex-1">{m.content}</span>
+              {renderLogIcon(m.icon, m.status)}
+            </div>
+          ) : (
+            m.content
+          );
+
         return (
           <div
             key={m.id}
@@ -140,7 +180,7 @@ export function AgentChatThread({ messages }: { messages: ChatMessage[] }) {
                   "rounded-xl border-border/30 bg-surface-elevated/70 text-muted-foreground text-[14px] leading-6"
               )}
             >
-              {m.content}
+              {systemContent}
             </div>
           </div>
         );

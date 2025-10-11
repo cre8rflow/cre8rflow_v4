@@ -4,8 +4,11 @@ import { create } from "zustand";
 import { nanoid } from "nanoid";
 
 export type AgentRunStatus = "idle" | "running" | "completed" | "error";
+export type AgentProgressStatus = "pending" | "complete" | "error";
 
 export type ChatRole = "user" | "agent" | "log" | "thought" | "system";
+
+export type ChatIcon = "badge-check" | "message-circle-x";
 
 export type ChatMessage = {
   id: string;
@@ -16,6 +19,8 @@ export type ChatMessage = {
   collapsed?: boolean;
   title?: string;
   autoCollapsed?: boolean;
+  icon?: ChatIcon;
+  status?: AgentProgressStatus;
 };
 
 type AgentUIState = {
@@ -38,7 +43,11 @@ type AgentUIState = {
   clearMessages: () => void;
   addUserMessage: (content: string) => string; // returns id
   addAgentMessage: (content: string) => string; // returns id
-  addLogMessage: (content: string) => string; // returns id
+  addLogMessage: (
+    content: string,
+    icon?: ChatIcon,
+    status?: AgentProgressStatus
+  ) => string; // returns id
   createThinkingMessage: () => string; // optimistic thinking row
   updateMessageById: (id: string, patch: Partial<ChatMessage>) => void;
   appendThoughtDelta: (id: string | null, delta: string) => string; // returns id used
@@ -117,13 +126,15 @@ export const useAgentUIStore = create<AgentUIState>((set, get) => ({
     set({ messages: [...get().messages, msg] });
     return id;
   },
-  addLogMessage: (content) => {
+  addLogMessage: (content, icon, status) => {
     const id = nanoid();
     const msg: ChatMessage = {
       id,
       role: "log",
       content,
       ts: Date.now(),
+      icon,
+      status,
     };
     set({ messages: [...get().messages, msg] });
     return id;

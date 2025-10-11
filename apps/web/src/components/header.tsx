@@ -12,7 +12,7 @@ export function Header() {
     <Link href="/" className="flex items-center gap-3">
       <Image
         src="/logo.svg"
-        alt="OpenCut Logo"
+        alt="Kallio Logo"
         className="invert dark:invert-0"
         width={32}
         height={32}

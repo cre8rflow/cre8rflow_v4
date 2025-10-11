@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * SSE client connector for agent instruction streaming
  * Handles EventSource connection and instruction execution
@@ -13,6 +15,11 @@ import { env } from "@/env";
 import { useTimelineCommandStore } from "@/stores/timeline-command-store";
 import type { CommandEffect } from "@/stores/timeline-command-store";
 import { formatSearchQuery } from "@/lib/agent-utils";
+import {
+  AgentProgressReporter,
+  formatAgentProgressContent,
+  type AgentProgressStatus,
+} from "@/lib/agent-progress";
 
 type TrimSideSpec = {
   mode: string;
@@ -119,6 +126,103 @@ function recordExecutedFromInstruction(
         searchWasQuoted: normalized?.wasQuoted,
       },
     });
+  }
+}
+
+type FriendlyInstructionCopy = {
+  pending: string;
+  complete: string;
+  failure: string;
+};
+
+const FALLBACK_CLIP_LABEL = "selected clip";
+
+function stripSurroundingQuotes(text: string): string {
+  return text.replace(/^["']+|["']+$/g, "");
+}
+
+function stripTrailingParenthetical(text: string): string {
+  return text.replace(/\s*\([^)]*\)\s*$/, "").trim();
+}
+
+function normalizeFriendlyLabel(raw: string | undefined, fallback: string): string {
+  if (!raw) return fallback;
+  const cleaned = stripSurroundingQuotes(
+    stripTrailingParenthetical(raw.trim())
+  ).replace(/\.+$/, "");
+  return cleaned || fallback;
+}
+
+function friendlyQueryFromInstruction(
+  instruction: Extract<AnyInstruction, { type: "twelvelabs.applyCut" }>
+): string {
+  const normalized = instruction.queryNormalized;
+  const summary =
+    instruction.summaryQuery ||
+    (normalized ? formatSearchQuery(normalized) : undefined) ||
+    instruction.query ||
+    instruction.query_text;
+  return normalizeFriendlyLabel(summary, "requested clip");
+}
+
+function getFriendlyCopyForInstruction(
+  instruction: AnyInstruction
+): FriendlyInstructionCopy | null {
+  switch (instruction.type) {
+    case "twelvelabs.applyCut": {
+      const label = friendlyQueryFromInstruction(instruction);
+      return {
+        pending: `Cutting ${label}...`,
+        complete: `Cut out ${label}.`,
+        failure: `Could not cut out ${label}.`,
+      };
+    }
+    case "cut-out": {
+      const label = normalizeFriendlyLabel(
+        instruction.description,
+        FALLBACK_CLIP_LABEL
+      );
+      return {
+        pending: `Cutting ${label}...`,
+        complete: `Cut out ${label}.`,
+        failure: `Could not cut out ${label}.`,
+      };
+    }
+    case "trim": {
+      const label = normalizeFriendlyLabel(
+        instruction.description,
+        FALLBACK_CLIP_LABEL
+      );
+      return {
+        pending: `Trimming ${label}...`,
+        complete: `Trimmed ${label}.`,
+        failure: `Could not trim ${label}.`,
+      };
+    }
+    case "captions.generate": {
+      const label = normalizeFriendlyLabel(
+        instruction.description,
+        "captions"
+      );
+      return {
+        pending: `Adding ${label}...`,
+        complete: `Added ${label}.`,
+        failure: `Could not add ${label}.`,
+      };
+    }
+    case "deadspace.trim": {
+      const label = normalizeFriendlyLabel(
+        instruction.description,
+        "silence"
+      );
+      return {
+        pending: `Removing ${label}...`,
+        complete: `Removed ${label}.`,
+        failure: `Could not remove ${label}.`,
+      };
+    }
+    default:
+      return null;
   }
 }
 
@@ -312,6 +416,130 @@ export function startAgentStream({
   // Create EventSource connection
   const eventSource = new EventSource(`/api/agent/stream?${params.toString()}`);
 
+  const progress = new AgentProgressReporter();
+  const instructionMessages = new Map<
+    string,
+    { key: string; copy: FriendlyInstructionCopy }
+  >();
+  let instructionSequence = 0;
+  let searchSequence = 0;
+
+  const logFriendlyStatus = (status: AgentProgressStatus, text: string) => {
+    console.log("[agent-chat]", formatAgentProgressContent(status, text));
+  };
+
+  type PendingSearchContext = {
+    analyzeKey: string;
+    findKey: string;
+    summary: string;
+  };
+
+  const pendingSearches: PendingSearchContext[] = [];
+
+  const beginSearchMessages = (summaryRaw: string) => {
+    const summary = normalizeFriendlyLabel(summaryRaw, "the requested moment");
+    const analyzeKey = `search-${++searchSequence}-analyze`;
+    const findKey = `search-${searchSequence}-find`;
+    progress.begin(analyzeKey, "Analyzing video.");
+    progress.begin(findKey, `Finding ${summary}...`);
+    logFriendlyStatus("pending", "Analyzing video.");
+    logFriendlyStatus("pending", `Finding ${summary}...`);
+    pendingSearches.push({ analyzeKey, findKey, summary });
+  };
+
+  const completeSearchMessages = () => {
+    const ctx = pendingSearches.shift();
+    if (!ctx) return;
+    progress.complete(ctx.analyzeKey, "Analyzed video.");
+    progress.complete(ctx.findKey, `Found ${ctx.summary}.`);
+    logFriendlyStatus("complete", "Analyzed video.");
+    logFriendlyStatus("complete", `Found ${ctx.summary}.`);
+  };
+
+  const failSearchMessages = (override?: string) => {
+    const ctx = pendingSearches.shift();
+    if (!ctx) return;
+    progress.complete(ctx.analyzeKey, "Analyzed video.");
+    const failureText = override ?? `Could not find ${ctx.summary}.`;
+    progress.fail(ctx.findKey, failureText);
+    logFriendlyStatus("complete", "Analyzed video.");
+    logFriendlyStatus("error", failureText);
+  };
+
+  const handleFriendlyLog = (message: string) => {
+    if (message.startsWith("Calling TwelveLabs for:")) {
+      const summary = message.split("Calling TwelveLabs for:")[1]?.trim() ?? "";
+      beginSearchMessages(summary);
+      return;
+    }
+
+    if (message.startsWith("TwelveLabs match:")) {
+      completeSearchMessages();
+      return;
+    }
+
+    if (
+      message.startsWith("No TwelveLabs matches found") ||
+      message.includes("none are on the current timeline")
+    ) {
+      failSearchMessages();
+      return;
+    }
+
+    if (message.startsWith("TwelveLabs search failed:")) {
+      failSearchMessages("TwelveLabs search failed.");
+      return;
+    }
+
+    if (message.includes("Still analyzing video(s). Try again")) {
+      failSearchMessages("Video analysis is still in progress.");
+    }
+  };
+
+  const registerInstructionMessage = (
+    instruction: AnyInstruction,
+    commandKey: string
+  ) => {
+    if (instructionMessages.has(commandKey)) return;
+    const copy = getFriendlyCopyForInstruction(instruction);
+    if (!copy) return;
+    const key = `instruction-${++instructionSequence}`;
+    instructionMessages.set(commandKey, { key, copy });
+    progress.begin(key, copy.pending);
+    logFriendlyStatus("pending", copy.pending);
+  };
+
+  const settleInstructionMessage = (
+    commandKey: string,
+    outcome: "success" | "error"
+  ) => {
+    const entry = instructionMessages.get(commandKey);
+    if (!entry) return;
+    instructionMessages.delete(commandKey);
+    if (outcome === "success") {
+      progress.complete(entry.key, entry.copy.complete);
+      logFriendlyStatus("complete", entry.copy.complete);
+    } else {
+      progress.fail(entry.key, entry.copy.failure);
+      logFriendlyStatus("error", entry.copy.failure);
+    }
+  };
+
+  const failAllPendingInstructions = (reason?: string) => {
+    instructionMessages.forEach(({ key, copy }) => {
+      const message = reason ?? copy.failure;
+      progress.fail(key, message);
+      logFriendlyStatus("error", message);
+    });
+    instructionMessages.clear();
+  };
+
+  const failAllPendingSearches = (reason?: string) => {
+    while (pendingSearches.length) {
+      failSearchMessages(reason);
+    }
+  };
+
   const commandRegistry = new Map<
     string,
     { id: string; type: CommandEffect }
@@ -368,6 +596,7 @@ export function startAgentStream({
     if (!result.success && "error" in result) {
       commandStore.failCommand(registryEntry.id, result.error);
       onError?.(result.error);
+      settleInstructionMessage(commandKey, "error");
     } else {
       commandStore.updateProgress({
         id: registryEntry.id,
@@ -416,6 +645,7 @@ export function startAgentStream({
           );
         }
       }
+      settleInstructionMessage(commandKey, "success");
     }
 
     // Wait before processing next step to allow animation to be seen
@@ -435,6 +665,7 @@ export function startAgentStream({
       switch (streamEvent.event) {
         case "log": {
           if (streamEvent.message) {
+            handleFriendlyLog(streamEvent.message);
             onLog?.(streamEvent.message);
           }
           break;
@@ -444,6 +675,8 @@ export function startAgentStream({
           if (streamEvent.message) {
             onError?.(streamEvent.message);
           }
+          failAllPendingSearches();
+          failAllPendingInstructions(streamEvent.message);
           eventSource.close();
           return;
         }
@@ -481,6 +714,8 @@ export function startAgentStream({
               return;
             }
             activeCommands.add(registryEntry.id);
+
+            registerInstructionMessage(instruction, commandKey);
 
             pendingSteps.push({
               instruction,
@@ -531,6 +766,8 @@ export function startAgentStream({
         commandStore.failCommand(commandId, "Malformed SSE event");
       });
       activeCommands.clear();
+      failAllPendingInstructions("Agent stream ended unexpectedly.");
+      failAllPendingSearches("Agent stream ended unexpectedly.");
       onError?.("Malformed SSE event");
       eventSource.close();
     }
@@ -543,6 +780,8 @@ export function startAgentStream({
       commandStore.failCommand(commandId, "Stream connection error");
     });
     activeCommands.clear();
+    failAllPendingInstructions("Stream connection error.");
+    failAllPendingSearches("Stream connection error.");
     onError?.("Stream connection error");
     eventSource.close();
   };
