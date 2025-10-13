@@ -21,7 +21,7 @@ import { RenameProjectDialog } from "../rename-project-dialog";
 import { DeleteProjectDialog } from "../delete-project-dialog";
 import { ExportButton } from "./export-button";
 import { ThemeToggle } from "../theme-toggle";
-import { PanelPresetSelector } from "./panel-preset-selector";
+import { SocialProfileDialog } from "./social-profile-dialog";
 
 const NAV_LINKS = [
   { href: "/dashboard", label: "Dashboard" },
@@ -136,7 +136,7 @@ export function EditorHeader() {
 
   const rightContent = (
     <div className="flex items-center gap-2">
-      <PanelPresetSelector />
+      <SocialProfileDialog />
       <KeyboardShortcutsHelp />
       <ExportButton />
       <Button
