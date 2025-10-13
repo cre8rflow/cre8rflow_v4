@@ -39,6 +39,11 @@ const getElementNameWithSuffix = (
   return `${baseName} (${suffix})`;
 };
 
+type UpdateTextElementOptions = {
+  pushHistory?: boolean;
+  skipSave?: boolean;
+};
+
 interface TimelineStore {
   // Private track storage
   _tracks: TimelineTrack[];
@@ -236,7 +241,8 @@ interface TimelineStore {
         | "rotation"
         | "opacity"
       >
-    >
+    >,
+    options?: UpdateTextElementOptions
   ) => void;
   checkElementOverlap: (
     trackId: string,
@@ -925,22 +931,30 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
       );
     },
 
-    updateTextElement: (trackId, elementId, updates) => {
-      get().pushHistory();
-      updateTracksAndSave(
-        get()._tracks.map((track) =>
-          track.id === trackId
-            ? {
-                ...track,
-                elements: track.elements.map((element) =>
-                  element.id === elementId && element.type === "text"
-                    ? { ...element, ...updates }
-                    : element
-                ),
-              }
-            : track
-        )
+    updateTextElement: (trackId, elementId, updates, options) => {
+      const { pushHistory = true, skipSave = false } = options ?? {};
+      if (pushHistory) {
+        get().pushHistory();
+      }
+
+      const nextTracks = get()._tracks.map((track) =>
+        track.id === trackId
+          ? {
+              ...track,
+              elements: track.elements.map((element) =>
+                element.id === elementId && element.type === "text"
+                  ? { ...element, ...updates }
+                  : element
+              ),
+            }
+          : track
       );
+
+      if (skipSave) {
+        updateTracks(nextTracks);
+      } else {
+        updateTracksAndSave(nextTracks);
+      }
     },
 
     // Split element and keep only the left portion

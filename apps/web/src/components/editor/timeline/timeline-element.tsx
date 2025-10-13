@@ -43,6 +43,7 @@ export function TimelineElement({
   isSelected,
   onElementMouseDown,
   onElementClick,
+  onElementDoubleClick,
 }: TimelineElementProps) {
   const { mediaFiles } = useMediaStore();
   const {
@@ -253,6 +254,9 @@ export function TimelineElement({
   };
 
   const handleElementMouseDown = (e: React.MouseEvent) => {
+    if (e.detail > 1) {
+      return;
+    }
     if (onElementMouseDown) {
       onElementMouseDown(e, element);
     }
@@ -297,11 +301,14 @@ export function TimelineElement({
               element.hidden ? "opacity-50" : undefined
             )}
             onClick={(e) => onElementClick && onElementClick(e, element)}
-            onMouseDown={handleElementMouseDown}
-            onContextMenu={(e) =>
-              onElementMouseDown && onElementMouseDown(e, element)
-            }
-          >
+          onMouseDown={handleElementMouseDown}
+          onDoubleClick={(e) => {
+            onElementDoubleClick?.(e, element);
+          }}
+          onContextMenu={(e) =>
+            onElementMouseDown && onElementMouseDown(e, element)
+          }
+        >
             <div className="absolute inset-0 flex items-center h-full">
               {renderElementContent()}
             </div>
