@@ -16,16 +16,14 @@ const PlannerResponseSchema = z.object({
 
 export type PlannerSource =
   | "openai" // first try succeeded
-  | "retry" // corrective retry succeeded
-  | "fallback" // heuristic fallback used
-  | "no-key"; // no OPENAI key, heuristic used
+  | "retry"; // corrective retry succeeded
 
 export type PlannerResult =
   | {
       ok: true;
       steps: AnyInstruction[];
       source: PlannerSource;
-      hint?: string; // brief reason when retry/fallback/no-key used
+      hint?: string; // brief reason when retry used
     }
   | {
       ok: false;
@@ -35,16 +33,17 @@ export type PlannerResult =
     };
 
 /**
- * Call OpenAI to get a structured plan. Falls back to mock if unavailable.
+ * Call OpenAI to get a structured plan.
  */
 export async function planInstructions({
   prompt,
   metadata,
 }: AgentRequestPayload): Promise<PlannerResult> {
-  const hasKey = !!env.OPENAI_API_KEY;
-  if (!hasKey) {
-    const fallback = mockPlan(prompt);
-    return { ok: true, steps: fallback, source: "no-key" };
+  if (!env.OPENAI_API_KEY) {
+    return {
+      ok: false,
+      error: "OpenAI API key not configured",
+    };
   }
 
   try {
@@ -156,11 +155,6 @@ Hard rules:
         };
       }
 
-      // Final decision: fallback or error based on env
-      if (env.AGENT_PLANNER_FALLBACK !== "false") {
-        const fallback = mockPlan(prompt);
-        return { ok: true, steps: fallback, source: "fallback", hint };
-      }
       return {
         ok: false,
         error: `Planner invalid output: ${hint}`,
@@ -175,7 +169,9 @@ Hard rules:
       source: "openai",
     };
   } catch (error) {
-    // Network or parsing error – retry once without temperature, then decide
+    let lastError =
+      error instanceof Error ? error : new Error("Planner failed");
+
     try {
       const model = env.OPENAI_MODEL || "gpt-4o-mini";
       const system =
@@ -196,11 +192,27 @@ Hard rules:
           response_format: { type: "json_object" },
         }),
       });
-      if (resp2.ok) {
+
+      if (!resp2.ok) {
+        const text = await resp2.text().catch(() => "");
+        lastError = new Error(
+          `OpenAI retry error ${resp2.status}: ${text || "no response body"}`
+        );
+      } else {
         const data2 = await resp2.json();
         const content2 = data2?.choices?.[0]?.message?.content;
-        const parsed2 =
-          typeof content2 === "string" ? JSON.parse(content2) : content2;
+
+        let parsed2: unknown = content2;
+        if (typeof content2 === "string") {
+          try {
+            parsed2 = JSON.parse(content2);
+          } catch (parseError) {
+            throw new Error(
+              `Retry completion parsing failed: ${(parseError as Error).message}`
+            );
+          }
+        }
+
         const validated2 = PlannerResponseSchema.safeParse(parsed2);
         if (validated2.success) {
           return {
@@ -209,23 +221,23 @@ Hard rules:
             source: "retry",
           };
         }
-      }
-    } catch {}
 
-    if (env.AGENT_PLANNER_FALLBACK !== "false") {
-      const fallback = mockPlan(prompt);
-      return {
-        ok: true,
-        steps: fallback,
-        source: "fallback",
-        hint: "network or parse error",
-      };
+        const retryHint = summarizeZodError(validated2.error);
+        lastError = new Error(`Planner retry invalid output: ${retryHint}`);
+      }
+    } catch (retryError) {
+      if (retryError instanceof Error) {
+        lastError = retryError;
+      } else {
+        lastError = new Error("Planner retry failed");
+      }
     }
+
     return {
       ok: false,
-      error: error instanceof Error ? error.message : "Planner failed",
+      error: lastError.message,
       source: "openai",
-      hint: "network or parse error",
+      hint: lastError.message,
     };
   }
 }
@@ -598,7 +610,16 @@ function normalizePlannedSteps(
   const referencesEachClip =
     /\b(each|every)\s+(clip|clips|video|videos|segment|segments)\b/.test(lower);
 
-  let normalizedSteps = steps.map((step) => {
+  const captionSteps: AnyInstruction[] = [];
+  const nonCaptionSteps = steps.filter((step) => {
+    if ((step as any).type === "captions.generate") {
+      captionSteps.push(step);
+      return false;
+    }
+    return true;
+  });
+
+  let normalizedSteps = nonCaptionSteps.map((step) => {
     if (step.type === "trim") {
       const cloned = JSON.parse(JSON.stringify(step)) as typeof step;
 
@@ -837,114 +858,17 @@ function normalizePlannedSteps(
     result.push(step);
   }
 
-  return result;
-}
-
-/**
- * Current heuristic fallback used before OpenAI integration.
- */
-function mockPlan(prompt: string): AnyInstruction[] {
-  const lower = prompt.toLowerCase();
-  const steps: AnyInstruction[] = [] as AnyInstruction[];
-
-  const explicitRange = extractExplicitTimeRange(prompt);
-  const hasCutOut = /\bcut\s*out\b/.test(lower);
-  const trimDeltaMatch = lower.match(
-    /trim.*?by\s+(\d+(?:\.\d+)?)\s*(?:s|sec|seconds)?/
-  );
-  const parsedDelta = trimDeltaMatch
-    ? parseFloat(trimDeltaMatch[1])
-    : undefined;
-  const referencesEachClip =
-    /\b(each|every)\s+(clip|clips|video|videos|segment|segments)\b/.test(lower);
-
-  if (hasCutOut && explicitRange) {
-    const { start: normStart, end: normEnd } = explicitRange;
-
-    steps.push({
-      type: "cut-out",
-      target: {
-        kind: "clipsOverlappingRange",
-        start: normStart,
-        end: normEnd,
-        track: "media",
-      },
-      range: { mode: "globalSeconds", start: normStart, end: normEnd },
-      description: `Cut out ${normStart}–${normEnd}s across media clips`,
-    } as AnyInstruction);
-
-    if (lower.includes("trim") && parsedDelta !== undefined) {
-      steps.push({
-        type: "trim",
-        target: { kind: "lastClip", track: "media" },
-        sides: { right: { mode: "deltaSeconds", delta: parsedDelta } },
-        description: `Trim ${parsedDelta}s off the last clip`,
-      } as AnyInstruction);
+  if (captionSteps.length) {
+    for (const step of captionSteps) {
+      const key = canonicalInstructionKey(step);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(step);
     }
   }
 
-  const trimMatch = lower.match(/trim.*?(\d+)(?:st|nd|rd|th).*?clip/);
-  if (trimMatch) {
-    const clipIndex = parseInt(trimMatch[1], 10);
-    const deltaMatch = lower.match(/by\s+(\d+(?:\.\d+)?)\s*(?:s|sec|seconds)?/);
-    const delta = deltaMatch ? parseFloat(deltaMatch[1]) : 0.5;
-    steps.push({
-      type: "trim",
-      target: { kind: "nthClip", index: clipIndex, track: "media" },
-      sides: { right: { mode: "deltaSeconds", delta } },
-      description: `Trim ${delta}s from the ${clipIndex}${getOrdinalSuffix(clipIndex)} clip`,
-    } as AnyInstruction);
-  }
-
-  if (parsedDelta !== undefined && referencesEachClip) {
-    steps.push({
-      type: "trim",
-      target: {
-        kind: "clipsOverlappingRange",
-        start: 0,
-        end: 1e9,
-        track: "media",
-      },
-      sides: { right: { mode: "deltaSeconds", delta: parsedDelta } },
-      description: `Trim ${parsedDelta}s from each clip`,
-    } as AnyInstruction);
-  }
-
-  if (steps.length === 0) {
-    steps.push({
-      type: "trim",
-      target: { kind: "clipAtPlayhead" },
-      sides: { right: { mode: "deltaSeconds", delta: 1 } },
-      description: "Fallback: trim 1s from clip at playhead",
-    } as AnyInstruction);
-  }
-
-  const seen = new Set<string>();
-  const deduped: AnyInstruction[] = [];
-  for (const step of steps) {
-    const key = canonicalInstructionKey(step);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    deduped.push(step);
-  }
-
-  return deduped;
+  return result;
 }
-
-function getOrdinalSuffix(n: number): string {
-  if (n >= 11 && n <= 13) return "th";
-  switch (n % 10) {
-    case 1:
-      return "st";
-    case 2:
-      return "nd";
-    case 3:
-      return "rd";
-    default:
-      return "th";
-  }
-}
-
 function extractExplicitTimeRange(
   text: string
 ): { start: number; end: number } | null {
