@@ -11,6 +11,7 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
 import { useMediaStore } from "@/stores/media-store";
 import { useTimelineStore } from "@/stores/timeline-store";
 import { usePlaybackStore } from "@/stores/playback-store";
@@ -313,65 +314,114 @@ export function TimelineElement({
               {renderElementContent()}
             </div>
 
-            {commandFrames.map((frame) => {
-              const progress = frame.phase === "complete"
-                ? 1
-                : Math.max(0, Math.min(1, frame.progress));
-              const styleVars = {
-                "--command-frame-color": frame.theme.color,
-                "--command-frame-fill": frame.theme.fill,
-                "--command-frame-highlight": frame.theme.highlight,
-              } as CSSProperties;
+            <AnimatePresence initial={false}>
+              {commandFrames.map((frame) => {
+                const progress =
+                  frame.phase === "complete"
+                    ? 1
+                    : Math.max(0, Math.min(1, frame.progress));
+                const styleVars = {
+                  "--command-frame-color": frame.theme.color,
+                  "--command-frame-fill": frame.theme.fill,
+                  "--command-frame-highlight": frame.theme.highlight,
+                } as CSSProperties;
 
-              const label = frame.theme?.label || frame.effect?.toUpperCase();
-              let statusText = "";
-              switch (frame.phase) {
-                case "preview":
-                  statusText = "Queued";
-                  break;
-                case "executing":
-                  statusText = `${Math.round(progress * 100)}%`;
-                  break;
-                case "complete":
-                  statusText = "Done";
-                  break;
-                case "error":
-                  statusText = "Error";
-                  break;
-                default:
-                  statusText = frame.phase;
-              }
+                const label = frame.theme?.label || frame.effect?.toUpperCase();
+                let statusText = "";
+                switch (frame.phase) {
+                  case "preview":
+                    statusText = "Queued";
+                    break;
+                  case "executing":
+                    statusText = `${Math.round(progress * 100)}%`;
+                    break;
+                  case "complete":
+                    statusText = "Done";
+                    break;
+                  case "error":
+                    statusText = "Error";
+                    break;
+                  default:
+                    statusText = frame.phase;
+                }
 
-              return (
-                <div
-                  key={frame.id}
-                  className={cn(
-                    "timeline-command-frame",
-                    `timeline-command-frame--${frame.phase}`
-                  )}
-                  style={styleVars}
-                >
-                  <div
-                    className="timeline-command-frame__progress"
-                    aria-hidden
-                    style={{ width: `${progress * 100}%` }}
-                  />
-                  {label ? (
-                    <div className="timeline-command-frame__badge">
-                      {label}
-                    </div>
-                  ) : null}
-                  {statusText ? (
-                    <div className="timeline-command-frame__status" aria-live="polite">
-                      <span className="timeline-command-frame__status-dot" />
-                      <span className="timeline-command-frame__status-text">
-                        {statusText}
-                      </span>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
+                const showPulse = frame.phase === "executing";
+                const showShimmer = frame.phase === "preview";
+
+                return (
+                  <motion.div
+                    key={frame.id}
+                    className={cn(
+                      "timeline-command-frame",
+                      `timeline-command-frame--${frame.phase}`
+                    )}
+                    style={styleVars}
+                    initial={{ opacity: 0, y: -8, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                    transition={{ duration: 0.25, ease: "easeOut" }}
+                  >
+                    {showShimmer ? (
+                      <motion.div
+                        className="timeline-command-frame__preview"
+                        initial={{ x: "-100%" }}
+                        animate={{ x: "100%" }}
+                        transition={{
+                          duration: 1.2,
+                          repeat: Infinity,
+                          ease: "linear",
+                        }}
+                      />
+                    ) : null}
+
+                    {showPulse ? (
+                      <motion.div
+                        className="timeline-command-frame__pulse"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: [0.18, 0.4, 0.18] }}
+                        transition={{
+                          duration: 1.5,
+                          repeat: Infinity,
+                          ease: "easeInOut",
+                        }}
+                      />
+                    ) : null}
+
+                    <motion.div
+                      className="timeline-command-frame__progress"
+                      aria-hidden
+                      initial={{ width: 0 }}
+                      animate={{ width: `${progress * 100}%` }}
+                      transition={{ duration: 0.3, ease: "easeOut" }}
+                    />
+                    {label ? (
+                      <motion.div
+                        className="timeline-command-frame__badge"
+                        initial={{ scale: 0.9, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={{ duration: 0.2, ease: "easeOut" }}
+                      >
+                        {label}
+                      </motion.div>
+                    ) : null}
+                    {statusText ? (
+                      <motion.div
+                        className="timeline-command-frame__status"
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.2, ease: "easeOut" }}
+                        aria-live="polite"
+                      >
+                        <span className="timeline-command-frame__status-dot" />
+                        <span className="timeline-command-frame__status-text">
+                          {statusText}
+                        </span>
+                      </motion.div>
+                    ) : null}
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
 
             {(hasAudio ? isMuted : element.hidden) && (
               <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center pointer-events-none">

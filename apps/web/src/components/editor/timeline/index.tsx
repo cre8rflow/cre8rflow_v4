@@ -121,7 +121,6 @@ export function Timeline() {
   const [isInTimeline, setIsInTimeline] = useState(false);
 
   const activeCommands = useActiveTimelineCommands();
-  const isTimelineProcessing = activeCommands.length > 0;
 
   const [textEditState, setTextEditState] =
     useState<TimelineTextEditState | null>(null);
@@ -848,25 +847,20 @@ export function Timeline() {
     <>
       <div className="flex h-full flex-col gap-3 rounded-3xl border border-border/40 bg-surface-base p-4 shadow-soft">
         <TimelineToolbar zoomLevel={zoomLevel} setZoomLevel={setZoomLevel} />
-
+        <TimelineCommandStatusBar commands={activeCommands} />
         <div
           className="relative flex-1 overflow-hidden rounded-2xl border border-border/30 bg-surface-base/70"
           {...dragProps}
           onMouseEnter={() => setIsInTimeline(true)}
           onMouseLeave={() => setIsInTimeline(false)}
         >
-          <TimelineCommandStatusBar commands={activeCommands} />
           {isDragOver && (
             <div className="pointer-events-none absolute inset-0 z-20 rounded-2xl border-2 border-primary/50 bg-primary/10 backdrop-blur-sm" />
           )}
           <div
-            className={cn(
-              "flex h-full flex-col overflow-hidden relative",
-              isTimelineProcessing ? "timeline-processing-active" : undefined
-            )}
+            className={cn("flex h-full flex-col overflow-hidden relative")}
             ref={timelineRef}
           >
-          {isTimelineProcessing && <div className="timeline-processing-dim" />}
           <TimelinePlayhead
             currentTime={currentTime}
             duration={duration}

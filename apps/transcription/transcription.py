@@ -9,8 +9,10 @@ class TranscribeRequest(BaseModel):
     decryptionKey: str = None
     iv: str = None
 
+# 1 Infra as parameters
 @app.function(
     image=modal.Image.debian_slim()
+        #2 bake in ffmpeg and whisper
         .apt_install(["ffmpeg"])
         .pip_install(["openai-whisper", "boto3", "fastapi[standard]", "pydantic", "cryptography"]),
     gpu="A10G",
@@ -36,7 +38,7 @@ def transcribe_audio(request: TranscribeRequest):
                 "error": "Missing filename parameter"
             }
         
-        # Initialize R2 client
+        #3 Initialize R2 client. If key, then decrpty inside container
         s3_client = boto3.client(
             's3',
             endpoint_url=f'https://{os.environ["CLOUDFLARE_ACCOUNT_ID"]}.r2.cloudflarestorage.com',
@@ -88,6 +90,7 @@ def transcribe_audio(request: TranscribeRequest):
                     with open(temp_path, 'wb') as f:
                         f.write(decrypted_data)
                 
+                #4 Modal init + inference 
                 # Load Whisper model
                 model = whisper.load_model("base")
                 
@@ -112,6 +115,7 @@ def transcribe_audio(request: TranscribeRequest):
                     adjusted_segment["end"] = max(0.5, segment["end"] - 0.5)  # Ensure duration is at least 0.5s
                     adjusted_segments.append(adjusted_segment)
                 
+                #5 Shaped JSON
                 return {
                     "text": result["text"],
                     "segments": adjusted_segments,

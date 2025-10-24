@@ -622,6 +622,16 @@ function normalizePlannedSteps(
   let normalizedSteps = nonCaptionSteps.map((step) => {
     if (step.type === "trim") {
       const cloned = JSON.parse(JSON.stringify(step)) as typeof step;
+      let scopeChangedToLast = false;
+
+      if (referencesEachClip) {
+        cloned.target = {
+          kind: "clipsOverlappingRange",
+          start: 0,
+          end: 1e9,
+          track: "media",
+        };
+      }
 
       // If prompt suggests "last N seconds", ensure right: deltaSeconds
       if (lastSeconds !== undefined) {
@@ -632,15 +642,9 @@ function normalizePlannedSteps(
           cloned.sides.right = { mode: "deltaSeconds", delta: lastSeconds };
         }
         // Adjust target scope based on prompt
-        if (referencesEachClip) {
-          cloned.target = {
-            kind: "clipsOverlappingRange",
-            start: 0,
-            end: 1e9,
-            track: "media",
-          };
-        } else if (cloned.target?.kind !== "lastClip") {
+        if (!referencesEachClip && cloned.target?.kind !== "lastClip") {
           cloned.target = { kind: "lastClip", track: "media" };
+          scopeChangedToLast = true;
         }
       }
 
@@ -650,13 +654,8 @@ function normalizePlannedSteps(
         cloned.sides.right = { mode: "toSeconds", time: toSeconds };
       }
 
-      if (referencesEachClip) {
-        cloned.target = {
-          kind: "clipsOverlappingRange",
-          start: 0,
-          end: 1e9,
-          track: "media",
-        };
+      if (referencesEachClip || scopeChangedToLast) {
+        normalizeTrimDescription(cloned, referencesEachClip);
       }
 
       return cloned;
@@ -817,8 +816,6 @@ function normalizePlannedSteps(
     }
   }
 
-  const seen = new Set<string>();
-  const result: AnyInstruction[] = [];
   if (lastSeconds !== undefined) {
     const hasTrim = normalizedSteps.some((step) => step.type === "trim");
     if (!hasTrim) {
@@ -849,6 +846,16 @@ function normalizePlannedSteps(
     }
   }
 
+  const seen = new Set<string>();
+  const result: AnyInstruction[] = [];
+  for (const step of normalizedSteps) {
+    const key = canonicalInstructionKey(step);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(step);
+  }
   for (const step of normalizedSteps) {
     const key = canonicalInstructionKey(step);
     if (seen.has(key)) {
@@ -869,6 +876,74 @@ function normalizePlannedSteps(
 
   return result;
 }
+
+const EACH_SCOPE_REGEX =
+  /\b(each|every)\s+(clip|clips|video|videos|segment|segments)\b/i;
+const LAST_SCOPE_REGEX =
+  /\b(last|final)\s+(clip|clips|video|videos|segment|segments)\b/i;
+
+function normalizeTrimDescription(
+  instruction: Extract<AnyInstruction, { type: "trim" }>,
+  referencesEachClip: boolean
+) {
+  const description = instruction.description ?? "";
+  const mentionsEachScope = EACH_SCOPE_REGEX.test(description);
+  const mentionsLastScope = LAST_SCOPE_REGEX.test(description);
+
+  const shouldUpdate = referencesEachClip
+    ? !mentionsEachScope
+    : mentionsEachScope;
+
+  if (!shouldUpdate) {
+    return;
+  }
+
+  instruction.description = buildTrimScopeDescription(
+    instruction,
+    referencesEachClip ? "each clip" : "the last clip"
+  );
+}
+
+function buildTrimScopeDescription(
+  instruction: Extract<AnyInstruction, { type: "trim" }>,
+  scopeLabel: string
+): string {
+  const sides = instruction.sides ?? {};
+  const left = sides.left;
+  const right = sides.right;
+
+  const leftDelta =
+    left?.mode === "deltaSeconds" && typeof left.delta === "number"
+      ? left.delta
+      : undefined;
+  const rightDelta =
+    right?.mode === "deltaSeconds" && typeof right.delta === "number"
+      ? right.delta
+      : undefined;
+
+  if (leftDelta !== undefined && rightDelta !== undefined) {
+    return `Trim ${formatSeconds(leftDelta)}s from the start and ${formatSeconds(rightDelta)}s from the end of ${scopeLabel}`;
+  }
+
+  if (leftDelta !== undefined) {
+    return `Trim ${formatSeconds(leftDelta)}s from the start of ${scopeLabel}`;
+  }
+
+  if (rightDelta !== undefined) {
+    return `Trim ${formatSeconds(rightDelta)}s from ${scopeLabel}`;
+  }
+
+  if (right?.mode === "toSeconds" && typeof right.time === "number") {
+    return `Trim ${scopeLabel} to ${formatSeconds(right.time)}s`;
+  }
+
+  if (left?.mode === "toSeconds" && typeof left.time === "number") {
+    return `Trim the start of ${scopeLabel} to ${formatSeconds(left.time)}s`;
+  }
+
+  return `Trim ${scopeLabel}`;
+}
+
 function extractExplicitTimeRange(
   text: string
 ): { start: number; end: number } | null {

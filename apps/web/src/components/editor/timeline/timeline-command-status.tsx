@@ -1,7 +1,9 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
 import { useMemo } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { Loader2 } from "lucide-react";
+import type { CSSProperties } from "react";
 import {
   useActiveTimelineCommands,
   type CommandEntry,
@@ -73,10 +75,21 @@ export function TimelineCommandStatusBar({
 
   const summary = useMemo(() => summarizeCommands(active), [active]);
 
-  if (!summary) {
-    return null;
-  }
+  return (
+    <AnimatePresence initial={false}>
+      {summary ? (
+        <Banner summary={summary} activeCount={active.length} key={summary.primary.id} />
+      ) : null}
+    </AnimatePresence>
+  );
+}
 
+interface BannerProps {
+  summary: NonNullable<ReturnType<typeof summarizeCommands>>;
+  activeCount: number;
+}
+
+function Banner({ summary, activeCount }: BannerProps) {
   const { primary, aggregateProgress, completedOps, totalOps } = summary;
   const percent = Math.max(0, Math.min(1, aggregateProgress));
   const roundedPercent = Math.round(percent * 100);
@@ -93,55 +106,56 @@ export function TimelineCommandStatusBar({
     totalOps
   )} of ${totalOps} operation${totalOps === 1 ? "" : "s"}`;
 
+  const styleVars: CSSProperties = {
+    "--command-banner-accent": primary.theme?.color ?? "var(--command-generic-color)",
+    "--command-banner-highlight":
+      primary.theme?.highlight ?? "var(--command-generic-highlight)",
+    "--command-banner-fill": primary.theme?.fill ?? "var(--command-generic-fill)",
+  };
+
   return (
-    <div className="timeline-processing-overlay">
-      <div
-        className="timeline-processing-card"
-        style={{
-          // Provide CSS variables for accent/highlight usage
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-ignore CSS custom property typing
-          "--command-frame-color": primary.theme.color,
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-ignore CSS custom property typing
-          "--command-frame-highlight": primary.theme.highlight,
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-ignore CSS custom property typing
-          "--command-frame-fill": primary.theme.fill,
-        }}
-      >
-        <div className="timeline-processing-card__header">
-          <Loader2 className="timeline-processing-spinner animate-spin" />
-          <div className="timeline-processing-card__titles">
-            <span className="timeline-processing-card__title">
-              Processing Timeline
-            </span>
-            <span className="timeline-processing-card__subtitle">
-              {detailText}
-            </span>
-          </div>
-        </div>
-        <span className="timeline-processing-label">{effectLabel}</span>
-        <div className="timeline-processing-progress" aria-hidden>
-          <div
-            className="timeline-processing-progress__bar"
-            style={{ width: `${percent * 100}%` }}
-          />
-        </div>
-        <div className="timeline-processing-meta">
-          <div className="timeline-processing-meta__operations">
-            <span className="timeline-processing-meta__primary">
-              {operationsLabel}
-            </span>
-            <span className="timeline-processing-meta__secondary">
-              {active.length} active task{active.length === 1 ? "" : "s"}
-            </span>
-          </div>
-          <span className="timeline-processing-meta__primary">
-            {roundedPercent}%
+    <motion.div
+      className="timeline-command-banner"
+      style={styleVars}
+      initial={{ opacity: 0, y: -12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -12 }}
+      transition={{ duration: 0.25, ease: "easeOut" }}
+      layout
+    >
+      <div className="timeline-command-banner__top">
+        <motion.span
+          className="timeline-command-banner__spinner"
+          animate={{ rotate: 360 }}
+          transition={{ repeat: Infinity, duration: 1.2, ease: "linear" }}
+        >
+          <Loader2 className="h-4 w-4" />
+        </motion.span>
+        <div className="timeline-command-banner__copy">
+          <span className="timeline-command-banner__title">{detailText}</span>
+          <span className="timeline-command-banner__subtitle">
+            {operationsLabel} · {activeCount} active command
+            {activeCount === 1 ? "" : "s"}
           </span>
         </div>
+        <span className="timeline-command-banner__label">{effectLabel}</span>
       </div>
-    </div>
+      <div className="timeline-command-banner__progress" aria-hidden>
+        <motion.div
+          className="timeline-command-banner__progress-fill"
+          initial={{ width: 0 }}
+          animate={{ width: `${percent * 100}%` }}
+          transition={{ duration: 0.35, ease: "easeOut" }}
+        />
+      </div>
+      <div className="timeline-command-banner__footer">
+        <span className="timeline-command-banner__footer-primary">
+          Timeline command in progress
+        </span>
+        <span className="timeline-command-banner__footer-secondary">
+          {roundedPercent}%
+        </span>
+      </div>
+    </motion.div>
   );
 }
