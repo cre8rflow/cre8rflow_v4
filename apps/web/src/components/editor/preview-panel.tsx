@@ -67,11 +67,12 @@ export function PreviewPanel() {
   const { currentScene } = useSceneStore();
   const previewRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const lastFrameTimeRef = useRef(0);
-  const renderSeqRef = useRef(0);
+  const lastFrameTimeRef = useRef(-Infinity);
   const offscreenCanvasRef = useRef<OffscreenCanvas | HTMLCanvasElement | null>(
     null
   );
+  const pendingRenderTimeRef = useRef<number | null>(null);
+  const isRenderingRef = useRef(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioGainRef = useRef<GainNode | null>(null);
@@ -481,7 +482,6 @@ export function PreviewPanel() {
   useEffect(() => {
     const onSeek = () => {
       lastFrameTimeRef.current = -Infinity;
-      renderSeqRef.current++;
     };
     window.addEventListener("playback-seek", onSeek as EventListener);
     lastFrameTimeRef.current = -Infinity;
@@ -650,14 +650,13 @@ export function PreviewPanel() {
   }, [isPlaying, volume, muted, mediaFiles]);
 
   // Canvas: draw current frame with caching
-  useEffect(() => {
-    const draw = async () => {
+  const drawFrame = useCallback(
+    async (time: number) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const mainCtx = canvas.getContext("2d");
       if (!mainCtx) return;
 
-      // Set canvas internal resolution to avoid blurry scaling
       const displayWidth = Math.max(1, Math.floor(previewDimensions.width));
       const displayHeight = Math.max(1, Math.floor(previewDimensions.height));
       if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
@@ -665,20 +664,16 @@ export function PreviewPanel() {
         canvas.height = displayHeight;
       }
 
-      // Throttle rendering to project FPS during playback only
       const fps = activeProject?.fps || DEFAULT_FPS;
       const minDelta = 1 / fps;
-      if (isPlaying) {
-        if (currentTime - lastFrameTimeRef.current < minDelta) {
-          return;
-        }
-        lastFrameTimeRef.current = currentTime;
+      if (isPlaying && time - lastFrameTimeRef.current < minDelta) {
+        return;
       }
 
       const shouldUseCache = !isPlaying;
       const cachedFrame = shouldUseCache
         ? getCachedFrame(
-            currentTime,
+            time,
             tracks,
             mediaFiles,
             activeProject,
@@ -686,15 +681,13 @@ export function PreviewPanel() {
           )
         : null;
 
-      if (shouldUseCache && cachedFrame) {
-        mainCtx.putImageData(cachedFrame, 0, 0);
-
+      const schedulePreRender = () => {
         preRenderNearbyFrames(
-          currentTime,
+          time,
           tracks,
           mediaFiles,
           activeProject,
-          async (time: number) => {
+          async (targetTime: number) => {
             const tempCanvas = document.createElement("canvas");
             tempCanvas.width = displayWidth;
             tempCanvas.height = displayHeight;
@@ -705,7 +698,7 @@ export function PreviewPanel() {
 
             await renderTimelineFrame({
               ctx: tempCtx,
-              time,
+              time: targetTime,
               canvasWidth: displayWidth,
               canvasHeight: displayHeight,
               tracks,
@@ -722,12 +715,21 @@ export function PreviewPanel() {
             return tempCtx.getImageData(0, 0, displayWidth, displayHeight);
           },
           currentScene?.id,
-          0.75
+          {
+            range: 0.75,
+          }
         );
+      };
+
+      if (shouldUseCache && cachedFrame) {
+        mainCtx.putImageData(cachedFrame, 0, 0);
+        schedulePreRender();
+        if (isPlaying) {
+          lastFrameTimeRef.current = time;
+        }
         return;
       }
 
-      // Cache miss - render from scratch
       if (!offscreenCanvasRef.current) {
         const hasOffscreen =
           typeof (globalThis as unknown as { OffscreenCanvas?: unknown })
@@ -745,7 +747,7 @@ export function PreviewPanel() {
           offscreenCanvasRef.current = c;
         }
       }
-      // Ensure size matches
+
       if (
         offscreenCanvasRef.current &&
         (offscreenCanvasRef.current as HTMLCanvasElement).getContext
@@ -768,6 +770,7 @@ export function PreviewPanel() {
           (c as unknown as { height: number }).height = displayHeight;
         }
       }
+
       const offscreenCanvas = offscreenCanvasRef.current as
         | HTMLCanvasElement
         | OffscreenCanvas;
@@ -778,7 +781,7 @@ export function PreviewPanel() {
 
       await renderTimelineFrame({
         ctx: offCtx as CanvasRenderingContext2D,
-        time: currentTime,
+        time,
         canvasWidth: displayWidth,
         canvasHeight: displayHeight,
         tracks,
@@ -800,7 +803,7 @@ export function PreviewPanel() {
       );
       if (shouldUseCache) {
         cacheFrame(
-          currentTime,
+          time,
           imageData,
           tracks,
           mediaFiles,
@@ -808,44 +811,9 @@ export function PreviewPanel() {
           currentScene?.id
         );
 
-        preRenderNearbyFrames(
-          currentTime,
-          tracks,
-          mediaFiles,
-          activeProject,
-          async (time: number) => {
-            const tempCanvas = document.createElement("canvas");
-            tempCanvas.width = displayWidth;
-            tempCanvas.height = displayHeight;
-            const tempCtx = tempCanvas.getContext("2d");
-            if (!tempCtx) {
-              throw new Error("Failed to create temp canvas context");
-            }
-
-            await renderTimelineFrame({
-              ctx: tempCtx,
-              time,
-              canvasWidth: displayWidth,
-              canvasHeight: displayHeight,
-              tracks,
-              mediaFiles,
-              backgroundType: activeProject?.backgroundType,
-              blurIntensity: activeProject?.blurIntensity,
-              backgroundColor:
-                activeProject?.backgroundType === "blur"
-                  ? undefined
-                  : activeProject?.backgroundColor || "#000000",
-              projectCanvasSize: canvasSize,
-            });
-
-            return tempCtx.getImageData(0, 0, displayWidth, displayHeight);
-          },
-          currentScene?.id,
-          0.75
-        );
+        schedulePreRender();
       }
 
-      // Blit offscreen to visible canvas
       mainCtx.clearRect(0, 0, displayWidth, displayHeight);
       if ((offscreenCanvas as HTMLCanvasElement).getContext) {
         mainCtx.drawImage(offscreenCanvas as HTMLCanvasElement, 0, 0);
@@ -856,23 +824,64 @@ export function PreviewPanel() {
           0
         );
       }
+
+      if (isPlaying) {
+        lastFrameTimeRef.current = time;
+      }
+    },
+    [
+      activeProject?.backgroundColor,
+      activeProject?.backgroundType,
+      activeProject?.fps,
+      cacheFrame,
+      canvasSize,
+      currentScene?.id,
+      getCachedFrame,
+      isPlaying,
+      mediaFiles,
+      preRenderNearbyFrames,
+      previewDimensions.height,
+      previewDimensions.width,
+      tracks,
+    ]
+  );
+
+  const processRenderQueue = useCallback(() => {
+    if (isRenderingRef.current) {
+      return;
+    }
+
+    isRenderingRef.current = true;
+
+    const run = async () => {
+      try {
+        while (pendingRenderTimeRef.current !== null) {
+          const time = pendingRenderTimeRef.current;
+          pendingRenderTimeRef.current = null;
+          await drawFrame(time);
+        }
+      } finally {
+        isRenderingRef.current = false;
+        if (pendingRenderTimeRef.current !== null) {
+          processRenderQueue();
+        }
+      }
     };
 
-    void draw();
-  }, [
-    activeElements,
-    currentTime,
-    previewDimensions.width,
-    previewDimensions.height,
-    canvasSize.width,
-    canvasSize.height,
-    activeProject?.backgroundType,
-    activeProject?.backgroundColor,
-    getCachedFrame,
-    cacheFrame,
-    preRenderNearbyFrames,
-    isPlaying,
-  ]);
+    void run();
+  }, [drawFrame]);
+
+  useEffect(() => {
+    pendingRenderTimeRef.current = currentTime;
+    processRenderQueue();
+  }, [currentTime, processRenderQueue]);
+
+  useEffect(() => {
+    return () => {
+      pendingRenderTimeRef.current = null;
+      isRenderingRef.current = false;
+    };
+  }, []);
 
   // Get media elements for blur background (video/image only)
   const getBlurBackgroundElements = (): ActiveElement[] => {

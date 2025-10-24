@@ -1,4 +1,4 @@
-import { useRef, useCallback } from "react";
+import { useCallback, useRef } from "react";
 import {
   TimelineTrack,
   TimelineElement,
@@ -8,16 +8,49 @@ import {
 import { MediaFile } from "@/types/media";
 import { TProject } from "@/types/project";
 
+type FrameCachePayload =
+  | {
+      kind: "bitmap";
+      bitmap: ImageBitmap;
+      width: number;
+      height: number;
+      approxBytes: number;
+    }
+  | {
+      kind: "imageData";
+      imageData: ImageData;
+      width: number;
+      height: number;
+      approxBytes: number;
+    };
+
 interface CachedFrame {
-  imageData: ImageData;
+  payload: FrameCachePayload | null;
   timelineHash: string;
   timestamp: number;
+  status: "pending" | "ready" | "failed";
+  token: symbol;
 }
 
 interface FrameCacheOptions {
-  maxCacheSize?: number; // Maximum number of cached frames
+  maxCacheSize?: number; // Maximum number of cached entries (failsafe)
   cacheResolution?: number; // Frames per second to cache at
+  maxMemoryBytes?: number; // Approximate memory budget for cached frames
 }
+
+export type FrameHandle =
+  | {
+      type: "bitmap";
+      bitmap: ImageBitmap;
+      width: number;
+      height: number;
+    }
+  | {
+      type: "imageData";
+      imageData: ImageData;
+      width: number;
+      height: number;
+    };
 
 // Shared singleton cache across hook instances (HMR-safe)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -26,10 +59,98 @@ const __sharedFrameCache: Map<number, CachedFrame> =
   __frameCacheGlobal.__sharedFrameCache ?? new Map<number, CachedFrame>();
 __frameCacheGlobal.__sharedFrameCache = __sharedFrameCache;
 
+const __sharedFrameCacheMemory: { usage: number } =
+  __frameCacheGlobal.__sharedFrameCacheMemory ?? { usage: 0 };
+__frameCacheGlobal.__sharedFrameCacheMemory = __sharedFrameCacheMemory;
+
+const hasWindow = typeof window !== "undefined";
+const createBitmapFn: (typeof window)["createImageBitmap"] | null =
+  hasWindow && typeof window.createImageBitmap === "function"
+    ? window.createImageBitmap.bind(window)
+    : null;
+
+const supportsOffscreenCanvas =
+  typeof OffscreenCanvas !== "undefined" && OffscreenCanvas !== undefined;
+
 export function useFrameCache(options: FrameCacheOptions = {}) {
-  const { maxCacheSize = 120, cacheResolution = 30 } = options; // ~4 seconds at 30fps
+  const {
+    maxCacheSize = 90,
+    cacheResolution = 30,
+    maxMemoryBytes = 48 * 1024 * 1024, // ~48MB default budget
+  } = options;
 
   const frameCacheRef = useRef(__sharedFrameCache);
+  const memoryUsageStore = useRef(__sharedFrameCacheMemory);
+  const scratchCanvasRef = useRef<HTMLCanvasElement | OffscreenCanvas | null>(
+    null
+  );
+
+  const approximateBytes = useCallback((width: number, height: number) => {
+    return Math.max(width * height * 4, 0);
+  }, []);
+
+  const releasePayload = useCallback((payload: FrameCachePayload | null) => {
+    if (!payload) return;
+    if (payload.kind === "bitmap") {
+      try {
+        payload.bitmap.close();
+      } catch {}
+    }
+  }, []);
+
+  const ensureScratchCanvas = useCallback(
+    (width: number, height: number) => {
+      let canvas = scratchCanvasRef.current;
+      if (!canvas) {
+        canvas = supportsOffscreenCanvas
+          ? new OffscreenCanvas(width, height)
+          : document.createElement("canvas");
+        scratchCanvasRef.current = canvas;
+      }
+
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+
+      return canvas;
+    },
+    []
+  );
+
+  const updateMemoryUsage = useCallback((delta: number) => {
+    const next = memoryUsageStore.current.usage + delta;
+    memoryUsageStore.current.usage = Math.max(0, next);
+  }, []);
+
+  const evictUntilWithinBudget = useCallback(
+    (bytesNeeded: number) => {
+      const cache = frameCacheRef.current;
+      if (memoryUsageStore.current.usage + bytesNeeded <= maxMemoryBytes) {
+        return;
+      }
+
+      const entries = Array.from(cache.entries());
+      if (entries.length === 0) return;
+      entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+
+      for (const [key, value] of entries) {
+        if (memoryUsageStore.current.usage + bytesNeeded <= maxMemoryBytes) {
+          break;
+        }
+        if (value.status === "ready" && value.payload) {
+          updateMemoryUsage(-value.payload.approxBytes);
+        }
+        releasePayload(value.payload);
+        cache.delete(key);
+      }
+    },
+    [maxMemoryBytes, releasePayload, updateMemoryUsage]
+  );
+
+  const readDimensions = useCallback((imageData: ImageData) => {
+    return { width: imageData.width, height: imageData.height };
+  }, []);
 
   // Generate a hash of the timeline state that affects rendering
   const getTimelineHash = useCallback(
@@ -40,7 +161,6 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
       activeProject: TProject | null,
       sceneId?: string
     ): string => {
-      // Get elements that are active at this time
       const activeElements: Array<{
         id: string;
         type: string;
@@ -49,7 +169,6 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
         trimStart: number;
         trimEnd: number;
         mediaId?: string;
-        // Text-specific properties
         content?: string;
         fontSize?: number;
         fontFamily?: string;
@@ -65,7 +184,6 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
         if (track.muted) continue;
 
         for (const element of track.elements) {
-          // Check if element has hidden property (some elements might not have it)
           const isHidden = "hidden" in element ? element.hidden : false;
           if (isHidden) continue;
 
@@ -110,7 +228,6 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
         }
       }
 
-      // Include project settings that affect rendering
       const projectState = {
         backgroundColor: activeProject?.backgroundColor,
         backgroundType: activeProject?.backgroundType,
@@ -124,12 +241,12 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
         sceneId,
         time: Math.floor(time * cacheResolution) / cacheResolution,
       };
+
       return JSON.stringify(hash);
     },
     [cacheResolution]
   );
 
-  // Check if a frame is cached and valid
   const isFrameCached = useCallback(
     (
       time: number,
@@ -140,8 +257,9 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
     ): boolean => {
       const frameKey = Math.floor(time * cacheResolution);
       const cached = frameCacheRef.current.get(frameKey);
-
-      if (!cached) return false;
+      if (!cached || cached.status !== "ready" || !cached.payload) {
+        return false;
+      }
 
       const currentHash = getTimelineHash(
         time,
@@ -152,22 +270,20 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
       );
       return cached.timelineHash === currentHash;
     },
-    [getTimelineHash, cacheResolution]
+    [cacheResolution, getTimelineHash]
   );
 
-  // Get cached frame if available and valid
-  const getCachedFrame = useCallback(
+  const getCachedFrameHandle = useCallback(
     (
       time: number,
       tracks: TimelineTrack[],
       mediaFiles: MediaFile[],
       activeProject: TProject | null,
       sceneId?: string
-    ): ImageData | null => {
+    ): FrameHandle | null => {
       const frameKey = Math.floor(time * cacheResolution);
       const cached = frameCacheRef.current.get(frameKey);
-
-      if (!cached) {
+      if (!cached || cached.status !== "ready" || !cached.payload) {
         return null;
       }
 
@@ -179,17 +295,67 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
         sceneId
       );
       if (cached.timelineHash !== currentHash) {
-        // Cache is stale, remove it
+        if (cached.payload) {
+          updateMemoryUsage(-cached.payload.approxBytes);
+          releasePayload(cached.payload);
+        }
         frameCacheRef.current.delete(frameKey);
         return null;
       }
 
-      return cached.imageData;
+      if (cached.payload.kind === "bitmap") {
+        return {
+          type: "bitmap",
+          bitmap: cached.payload.bitmap,
+          width: cached.payload.width,
+          height: cached.payload.height,
+        };
+      }
+
+      return {
+        type: "imageData",
+        imageData: cached.payload.imageData,
+        width: cached.payload.width,
+        height: cached.payload.height,
+      };
     },
-    [getTimelineHash, cacheResolution]
+    [cacheResolution, getTimelineHash, releasePayload, updateMemoryUsage]
   );
 
-  // Cache a rendered frame
+  const getCachedFrame = useCallback(
+    (
+      time: number,
+      tracks: TimelineTrack[],
+      mediaFiles: MediaFile[],
+      activeProject: TProject | null,
+      sceneId?: string
+    ): ImageData | null => {
+      const handle = getCachedFrameHandle(
+        time,
+        tracks,
+        mediaFiles,
+        activeProject,
+        sceneId
+      );
+      if (!handle) return null;
+
+      if (handle.type === "imageData") {
+        return handle.imageData;
+      }
+
+      const { width, height, bitmap } = handle;
+      const scratchCanvas = ensureScratchCanvas(width, height);
+      const ctx = scratchCanvas.getContext("2d");
+      if (!ctx) {
+        return null;
+      }
+      ctx.clearRect(0, 0, width, height);
+      ctx.drawImage(bitmap, 0, 0, width, height);
+      return ctx.getImageData(0, 0, width, height);
+    },
+    [ensureScratchCanvas, getCachedFrameHandle]
+  );
+
   const cacheFrame = useCallback(
     (
       time: number,
@@ -208,34 +374,131 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
         sceneId
       );
 
-      // Enforce cache size limit (LRU eviction)
+      const { width, height } = readDimensions(imageData);
+      const approxBytes = approximateBytes(width, height);
+
+      evictUntilWithinBudget(approxBytes);
+
       if (frameCacheRef.current.size >= maxCacheSize) {
-        // Remove oldest entries
         const entries = Array.from(frameCacheRef.current.entries());
         entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
-
-        // Remove oldest 25% of entries for breathing room
         const toRemove = Math.max(1, Math.floor(entries.length * 0.25));
         for (let i = 0; i < toRemove; i++) {
-          frameCacheRef.current.delete(entries[i][0]);
+          const [key, cached] = entries[i];
+          if (cached.status === "ready" && cached.payload) {
+            updateMemoryUsage(-cached.payload.approxBytes);
+          }
+          releasePayload(cached.payload);
+          frameCacheRef.current.delete(key);
         }
       }
 
-      frameCacheRef.current.set(frameKey, {
-        imageData,
+      const existing = frameCacheRef.current.get(frameKey);
+      if (existing) {
+        if (existing.status === "ready" && existing.payload) {
+          updateMemoryUsage(-existing.payload.approxBytes);
+        }
+        releasePayload(existing.payload);
+      }
+
+      const token = Symbol("frame-cache-entry");
+      const baseEntry: CachedFrame = {
+        payload: null,
         timelineHash,
         timestamp: Date.now(),
+        status: "pending",
+        token,
+      };
+
+      frameCacheRef.current.set(frameKey, baseEntry);
+
+      if (!createBitmapFn) {
+        baseEntry.payload = {
+          kind: "imageData",
+          imageData,
+          width,
+          height,
+          approxBytes,
+        };
+        baseEntry.status = "ready";
+        updateMemoryUsage(approxBytes);
+        return;
+      }
+
+      (async () => {
+        try {
+          const bitmap = await createBitmapFn(imageData);
+          const payload: FrameCachePayload = {
+            kind: "bitmap",
+            bitmap,
+            width,
+            height,
+            approxBytes,
+          };
+
+          const current = frameCacheRef.current.get(frameKey);
+          if (!current || current.token !== token) {
+            releasePayload(payload);
+            return;
+          }
+
+          baseEntry.payload = payload;
+          baseEntry.status = "ready";
+          baseEntry.timestamp = Date.now();
+          updateMemoryUsage(approxBytes);
+          evictUntilWithinBudget(0);
+        } catch (error) {
+          console.warn("Failed to create ImageBitmap for cached frame", error);
+          const fallbackPayload: FrameCachePayload = {
+            kind: "imageData",
+            imageData,
+            width,
+            height,
+            approxBytes,
+          };
+
+          const current = frameCacheRef.current.get(frameKey);
+          if (!current || current.token !== token) {
+            return;
+          }
+
+          baseEntry.payload = fallbackPayload;
+          baseEntry.status = "ready";
+          baseEntry.timestamp = Date.now();
+          updateMemoryUsage(approxBytes);
+          evictUntilWithinBudget(0);
+        }
+      })().catch((error) => {
+        console.warn("Frame caching promise rejected", error);
+        const current = frameCacheRef.current.get(frameKey);
+        if (current && current.token === token) {
+          baseEntry.payload = null;
+          baseEntry.status = "failed";
+        }
       });
     },
-    [getTimelineHash, cacheResolution, maxCacheSize]
+    [
+      cacheResolution,
+      getTimelineHash,
+      readDimensions,
+      approximateBytes,
+      evictUntilWithinBudget,
+      maxCacheSize,
+      releasePayload,
+      updateMemoryUsage,
+    ]
   );
 
-  // Clear cache when timeline changes significantly
   const invalidateCache = useCallback(() => {
+    for (const [, cached] of frameCacheRef.current.entries()) {
+      if (cached.payload) {
+        updateMemoryUsage(-cached.payload.approxBytes);
+        releasePayload(cached.payload);
+      }
+    }
     frameCacheRef.current.clear();
-  }, []);
+  }, [releasePayload, updateMemoryUsage]);
 
-  // Get render status for timeline indicator
   const getRenderStatus = useCallback(
     (
       time: number,
@@ -251,20 +514,19 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
     [isFrameCached]
   );
 
-  // Pre-render frames around current time
   const preRenderNearbyFrames = useCallback(
     async (
       currentTime: number,
       tracks: TimelineTrack[],
       mediaFiles: MediaFile[],
       activeProject: TProject | null,
-      renderFunction: (time: number) => Promise<ImageData>,
+      renderFunction: (time: number) => Promise<ImageData | null>,
       sceneId?: string,
-      range = 0.75 // seconds – keep tighter to limit memory usage
+      options?: { range?: number; shouldAbort?: () => boolean }
     ) => {
+      const range = options?.range ?? 0.75;
       const framesToPreRender: number[] = [];
 
-      // Calculate frames to pre-render (around current time)
       for (
         let offset = -range;
         offset <= range;
@@ -278,25 +540,29 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
         }
       }
 
-      // Avoid expanding to full buckets to keep work minimal
-      const expandedTimes: number[] = framesToPreRender.slice();
-
-      // Sort forward-first near currentTime to improve perceived responsiveness
+      const expandedTimes = framesToPreRender.slice();
       expandedTimes.sort((a, b) => {
         const da = a >= currentTime ? a - currentTime : currentTime - a + 1e6;
         const db = b >= currentTime ? b - currentTime : currentTime - b + 1e6;
         return da - db;
       });
 
-      // Cap total scheduled renders to avoid excessive memory churn
-      const CAP = Math.max(8, Math.min(30, Math.round(cacheResolution)));
-      const toSchedule = expandedTimes.slice(0, CAP);
+      const cap = Math.max(8, Math.min(30, Math.round(cacheResolution)));
+      const toSchedule = expandedTimes.slice(0, cap);
 
-      // Pre-render during idle time
       for (const time of toSchedule) {
         requestIdleCallback(async () => {
+          if (options?.shouldAbort?.()) {
+            return;
+          }
           try {
             const imageData = await renderFunction(time);
+            if (!imageData) {
+              return;
+            }
+            if (options?.shouldAbort?.()) {
+              return;
+            }
             cacheFrame(
               time,
               imageData,
@@ -311,16 +577,22 @@ export function useFrameCache(options: FrameCacheOptions = {}) {
         });
       }
     },
-    [isFrameCached, cacheFrame, cacheResolution]
+    [
+      cacheFrame,
+      cacheResolution,
+      isFrameCached,
+    ]
   );
 
   return {
     isFrameCached,
     getCachedFrame,
+    getCachedFrameHandle,
     cacheFrame,
     invalidateCache,
     getRenderStatus,
     preRenderNearbyFrames,
     cacheSize: frameCacheRef.current.size,
+    approxMemoryUsage: memoryUsageStore.current.usage,
   };
 }
