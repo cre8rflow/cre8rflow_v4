@@ -145,3 +145,5 @@ def main():
     # Test function - you can call this with modal run transcription.py
     print("Transcription service is ready to deploy!")
     print("Deploy with: modal deploy transcription.py")
+
+    #test
