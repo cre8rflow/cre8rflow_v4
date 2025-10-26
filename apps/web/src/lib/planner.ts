@@ -16,7 +16,8 @@ const PlannerResponseSchema = z.object({
 
 export type PlannerSource =
   | "openai" // first try succeeded
-  | "retry"; // corrective retry succeeded
+  | "retry" // corrective retry succeeded
+  | "rule"; // deterministic shortcut
 
 export type PlannerResult =
   | {
@@ -43,6 +44,35 @@ export async function planInstructions({
     return {
       ok: false,
       error: "OpenAI API key not configured",
+    };
+  }
+
+  const wantsDeadspaceOnly =
+    /(dead\s*space|remove\s+silence|trim\s+silence|cut\s+silence|silence\s+(at\s+)?(start|beginning)\s*(and|&|\+)\s*(end|finish))/i.test(
+      prompt
+    ) &&
+    !/(\band\b|\balso\b|\bplus\b|\bthen\b|\bafter\b|\bcaption\b|\bsubtitle\b|\bcolor\b|\bgrade\b|\bcrop\b|\bhighlight\b|\bmusic\b|\bsync\b)/i.test(
+      prompt
+    );
+
+  if (wantsDeadspaceOnly) {
+    const defaultSteps: AnyInstruction[] = [
+      {
+        type: "deadspace.trim",
+        target: {
+          kind: "clipsOverlappingRange",
+          start: 0,
+          end: 1e9,
+          track: "media",
+        },
+        description: "Trim dead space at start and end across media clips",
+      },
+    ];
+
+    return {
+      ok: true,
+      steps: normalizePlannedSteps(prompt, defaultSteps),
+      source: "rule",
     };
   }
 

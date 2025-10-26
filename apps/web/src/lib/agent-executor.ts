@@ -26,6 +26,10 @@ import {
 import { useAgentUIStore } from "@/stores/agent-ui-store";
 import { useTimelineCommandStore } from "@/stores/timeline-command-store";
 import type { CommandEffect } from "@/stores/timeline-command-store";
+import {
+  buildCaptionChunksFromSegments,
+  type TranscribedSegment,
+} from "@/lib/transcription-format";
 
 // =============================================================================
 // ASYNC TASK TRACKER (exported)
@@ -102,6 +106,9 @@ const instructionTypeToEffect = (
   }
 };
 
+const DEADSPACE_PRE_ROLL_SECONDS = 0.08; // Leave ~80ms lead-in before first word
+const DEADSPACE_POST_ROLL_SECONDS = 0.6; // Leave ~600ms tail for natural cadence
+
 /**
  * Execute any instruction (agent or server-side)
  * This is the main entry point for instruction execution
@@ -125,6 +132,7 @@ export function executeInstruction({
     const i = instruction as any;
     return executeDeadspaceTrimInstruction({
       instruction: i,
+      context,
     });
   }
   // Handle server-side instructions
@@ -457,38 +465,20 @@ function executeCaptionsGenerateInstruction({
         const e = await transcribe.json().catch(() => ({}) as any);
         throw new Error(e.message || "Transcription failed");
       }
-      const { segments } = await transcribe.json();
+      const {
+        text: transcriptText,
+        segments,
+      }: { text: string; segments: TranscribedSegment[] } =
+        await transcribe.json();
 
-      // 5) Convert segments into short caption chunks
-      const shortCaptions: Array<{
-        text: string;
-        startTime: number;
-        duration: number;
-      }> = [];
-      let globalEndTime = 0;
-      for (const seg of segments || []) {
-        const text = String(seg.text || "").trim();
-        if (!text) continue;
-        const words = text.split(/\s+/);
-        const segDur = Math.max(0.001, (seg.end ?? 0) - (seg.start ?? 0));
-        const wps = words.length / segDur;
-        let chunkStart = seg.start ?? 0;
-        for (let i = 0; i < words.length; i += 3) {
-          const chunkText = words.slice(i, i + 3).join(" ");
-          const chunkDuration = Math.max(
-            0.8,
-            Math.ceil((3 / Math.max(wps, 0.001)) * 10) / 10
-          );
-          let start = chunkStart;
-          if (start < globalEndTime) start = globalEndTime;
-          shortCaptions.push({
-            text: chunkText,
-            startTime: start,
-            duration: chunkDuration,
-          });
-          globalEndTime = start + chunkDuration;
-          chunkStart += chunkDuration;
-        }
+      // 5) Convert segments into short caption chunks with precise timing
+      const shortCaptions = buildCaptionChunksFromSegments(segments);
+      if (shortCaptions.length === 0) {
+        throw new Error(
+          transcriptText?.trim()
+            ? "Unable to derive caption timings from transcript."
+            : "Unable to find speech to caption."
+        );
       }
 
       const timeline = useTimelineStore.getState();
@@ -553,6 +543,7 @@ function executeCaptionsGenerateInstruction({
 
 function executeDeadspaceTrimInstruction({
   instruction,
+  context,
 }: {
   instruction: {
     type: "deadspace.trim";
@@ -560,31 +551,92 @@ function executeDeadspaceTrimInstruction({
     language?: string;
     description?: string;
   };
+  context?: InstructionContext;
 }): ExecutionOutcome {
   const endAsync = beginAsyncTask();
   const ui = useAgentUIStore.getState();
   const bubbleId = ui.addAgentMessage("Trimming dead space…");
 
+  const targets = resolveTargets(instruction.target);
+  const commandStore = useTimelineCommandStore.getState();
+
+  if (targets.length === 0) {
+    const message = `No targets found for: ${describeTargetSpec(instruction.target)}`;
+    ui.updateMessageById(bubbleId, { content: message });
+    toast.error(message);
+    endAsync();
+    return {
+      success: false,
+      error: message,
+      targetsResolved: 0,
+    };
+  }
+
+  if (context?.commandId) {
+    commandStore.registerTargets({
+      id: context.commandId,
+      type: "deadspace",
+      description: instruction.description,
+      targets,
+    });
+  }
+
+  const ordinalLabels = targets.map((_, idx) => formatOrdinalClip(idx + 1));
+  if (ordinalLabels.length) {
+    ui.updateMessage(
+      instruction.description
+        ? `${instruction.description} – ${ordinalLabels.join(", ")}`
+        : `Removing silence on ${ordinalLabels.join(", ")}`
+    );
+  }
+
+  type DeadspaceClipResult = {
+    trackId: string;
+    elementId: string;
+    clipName?: string;
+    applied: boolean;
+    start?: number;
+    end?: number;
+    speechStart?: number;
+    speechEnd?: number;
+    confidence?: number;
+    source?: "remote" | "local" | "transcript";
+    removedHead?: { start: number; end: number };
+    removedTail?: { start: number; end: number };
+    transcriptSegments?: Array<{ start: number; end: number; text: string }>;
+    reason?: string;
+  };
+
+  const totalTargets = targets.length;
+  let processedCount = 0;
+  const clipResults: DeadspaceClipResult[] = [];
+  let detailLines: string[] = [];
+
+  const updateCommandProgress = () => {
+    if (!context?.commandId || totalTargets === 0) return;
+    commandStore.updateProgress({
+      id: context.commandId,
+      progress: Math.min(1, processedCount / totalTargets),
+      phase: "executing",
+    });
+  };
+
+  updateCommandProgress();
+
   (async () => {
-    const lang = (instruction.language || "auto").toLowerCase();
     const timeline = useTimelineStore.getState();
     try {
-      const targets = resolveTargets(instruction.target);
-      if (targets.length === 0) {
-        toast.error(
-          `No targets found for: ${describeTargetSpec(instruction.target)}`
-        );
-        return;
-      }
-
       // Single history entry for whole batch
       timeline.pushHistory();
 
       let successCount = 0;
       let skippedCount = 0;
       const errors: string[] = [];
+      let clipIndex = 0;
 
       for (const target of targets) {
+        let clipName = formatOrdinalClip(clipIndex + 1);
+        let audioCtx: AudioContext | null = null;
         try {
           const fresh = useTimelineStore.getState();
           const track = fresh.tracks.find((t) => t.id === target.trackId);
@@ -593,8 +645,17 @@ function executeDeadspaceTrimInstruction({
           );
           if (!track || !element || element.type !== "media") {
             skippedCount++;
+            clipResults.push({
+              trackId: target.trackId,
+              elementId: target.elementId,
+              clipName,
+              applied: false,
+              reason: "Clip not found or not a media element.",
+            });
             continue;
           }
+
+          clipName = element.name?.trim() || clipName;
 
           const mediaStore = useMediaStore.getState();
           const mediaFile = mediaStore.mediaFiles.find(
@@ -605,6 +666,13 @@ function executeDeadspaceTrimInstruction({
             !(mediaFile.type === "audio" || mediaFile.type === "video")
           ) {
             skippedCount++;
+            clipResults.push({
+              trackId: target.trackId,
+              elementId: target.elementId,
+              clipName,
+              applied: false,
+              reason: "Clip is not an audio/video source.",
+            });
             continue;
           }
 
@@ -613,110 +681,189 @@ function executeDeadspaceTrimInstruction({
             element.duration - element.trimStart - element.trimEnd
           );
           if (effectiveDuration <= 0.25) {
-            // too short to process
             skippedCount++;
+            clipResults.push({
+              trackId: target.trackId,
+              elementId: target.elementId,
+              clipName,
+              applied: false,
+              reason: "Clip too short to analyse.",
+            });
             continue;
           }
 
-          // 1) Extract element-local audio (mono 16k)
           const audioBlob = await extractElementAudio(
             mediaFile.file,
             element.trimStart,
             effectiveDuration
           );
-
-          // 2) Local VAD to find speech window (10 ms precision)
           const arrayBuf = await audioBlob.arrayBuffer();
-          const AC: any =
-            (window as any).AudioContext || (window as any).webkitAudioContext;
-          const audioCtx = new AC();
-          const audioBuffer: AudioBuffer = await audioCtx.decodeAudioData(
-            arrayBuf.slice(0)
-          );
-          const vad = detectSpeechWindow(audioBuffer);
 
-          let earliestStart: number | null = null;
-          let latestEnd: number | null = null;
+type DetectionResult = {
+  trimStart: number;
+  trimEnd: number;
+  speechStart: number;
+  speechEnd: number;
+  confidence: number;
+  source: "remote" | "local" | "transcript";
+  transcriptSegments?: Array<{ start: number; end: number; text: string }>;
+};
 
-          if (vad && vad.confidence >= 0.5) {
-            earliestStart = vad.start;
-            latestEnd = vad.end;
-          } else {
-            // Optional hybrid fallback: escalate to transcription only when VAD is uncertain
+          let detection: DetectionResult | null = null;
+  const detectionNotes: string[] = [];
+  const AC: any =
+    (window as any).AudioContext || (window as any).webkitAudioContext;
+
+  const remoteResult = await requestRemoteDeadspaceTrim({
+            arrayBuffer: arrayBuf,
+            prePadding: DEADSPACE_PRE_ROLL_SECONDS,
+            postPadding: DEADSPACE_POST_ROLL_SECONDS,
+            language: instruction.language,
+          });
+
+          if (!remoteResult) {
+            detectionNotes.push("Remote trim service unavailable.");
+          } else if (
+            remoteResult.speechDetected &&
+            remoteResult.trimEnd > remoteResult.trimStart
+          ) {
+            const transcriptSegments = (remoteResult.transcript?.segments ?? []).map(
+              (seg: any) => ({
+                start: Number(seg.start ?? 0),
+                end: Number(seg.end ?? 0),
+                text: String(seg.text ?? ""),
+              })
+            );
+            const transcriptStarts = transcriptSegments
+              .map((seg) => seg.start)
+              .filter((value) => Number.isFinite(value));
+            const transcriptEnds = transcriptSegments
+              .map((seg) => seg.end)
+              .filter((value) => Number.isFinite(value));
+
+            const speechStartCandidate =
+              transcriptStarts.length > 0
+                ? Math.min(...transcriptStarts)
+                : Number(remoteResult.speechStart);
+            const speechEndCandidate =
+              transcriptEnds.length > 0
+                ? Math.max(...transcriptEnds)
+                : Number(remoteResult.speechEnd);
+
+            const fallbackStart = Number(remoteResult.trimStart);
+            const fallbackEnd = Number(remoteResult.trimEnd);
+
+            const speechStartRaw = Number.isFinite(speechStartCandidate)
+              ? speechStartCandidate
+              : Number.isFinite(fallbackStart)
+              ? fallbackStart
+              : 0;
+            const speechEndRaw = Number.isFinite(speechEndCandidate)
+              ? speechEndCandidate
+              : Number.isFinite(fallbackEnd)
+              ? fallbackEnd
+              : speechStartRaw;
+
+            const speechStart = Math.max(0, speechStartRaw);
+            const speechEnd = Math.max(speechStart, speechEndRaw);
+
+            const desiredTrimStart = Math.max(
+              0,
+              speechStart - DEADSPACE_PRE_ROLL_SECONDS
+            );
+            const desiredTrimEnd = Math.min(
+              effectiveDuration,
+              speechEnd + DEADSPACE_POST_ROLL_SECONDS
+            );
+            if (desiredTrimEnd <= desiredTrimStart) {
+              detectionNotes.push(
+                "Remote speech window collapsed after applying padding."
+              );
+            } else {
+              detection = {
+                trimStart: desiredTrimStart,
+                trimEnd: desiredTrimEnd,
+                speechStart,
+                speechEnd,
+                confidence: remoteResult.confidence ?? 0,
+                source:
+                  remoteResult.analysisSource === "transcript"
+                    ? "transcript"
+                    : "remote",
+                transcriptSegments,
+              };
+            }
+          } else if (remoteResult?.error) {
+            detectionNotes.push(remoteResult.error);
+          } else if (!remoteResult.speechDetected) {
+            detectionNotes.push("Remote service reported no speech.");
+          }
+
+          if (!detection) {
             try {
-              const { encryptedData, key, iv } =
-                await encryptWithRandomKey(arrayBuf);
-              const encryptedBlob = new Blob([encryptedData]);
+              audioCtx = new AC();
+              const audioBuffer: AudioBuffer = await audioCtx.decodeAudioData(
+                arrayBuf.slice(0)
+              );
+              const vad = detectSpeechWindow(audioBuffer);
 
-              const presign = await fetch("/api/get-upload-url", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ fileExtension: "wav" }),
-              });
-              if (!presign.ok) {
-                const e = await presign.json().catch(() => ({}) as any);
-                throw new Error(e.message || "Failed to get upload URL");
+              if (vad && vad.confidence >= 0.5) {
+                const speechStart = vad.start;
+                const speechEnd = vad.end;
+                detection = {
+                  trimStart: Math.max(
+                    0,
+                    speechStart - DEADSPACE_PRE_ROLL_SECONDS
+                  ),
+                  trimEnd: Math.min(
+                    effectiveDuration,
+                    speechEnd + DEADSPACE_POST_ROLL_SECONDS
+                  ),
+                  speechStart,
+                  speechEnd,
+                  confidence: vad.confidence,
+                  source: "local",
+                };
+              } else {
+                detectionNotes.push("Local VAD could not find confident speech.");
               }
-              const { uploadUrl, fileName } = await presign.json();
-              const put = await fetch(uploadUrl, {
-                method: "PUT",
-                body: encryptedBlob,
-              });
-              if (!put.ok) throw new Error(`Upload failed: ${put.status}`);
-
-              const transcribe = await fetch("/api/transcribe", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  filename: fileName,
-                  language: lang,
-                  decryptionKey: arrayBufferToBase64(key),
-                  iv: arrayBufferToBase64(iv),
-                }),
-              });
-              if (!transcribe.ok) {
-                const e = await transcribe.json().catch(() => ({}) as any);
-                throw new Error(e.message || "Transcription failed");
-              }
-              const { segments } = await transcribe.json();
-              const filtered = Array.isArray(segments)
-                ? segments.filter((s: any) => {
-                    const d = (s.end ?? 0) - (s.start ?? 0);
-                    const noSpeech =
-                      typeof s.no_speech_prob === "number"
-                        ? s.no_speech_prob
-                        : 0;
-                    return d >= 0.2 && noSpeech < 0.8;
-                  })
-                : [];
-              if (filtered.length) {
-                earliestStart = Math.min(
-                  ...filtered.map((s: any) => s.start ?? 0)
-                );
-                latestEnd = Math.max(...filtered.map((s: any) => s.end ?? 0));
-              }
-            } catch (e) {
-              // If fallback also fails, skip this element
+            } catch (error) {
+              detectionNotes.push(
+                error instanceof Error
+                  ? error.message
+                  : "Local speech detection failed."
+              );
             }
           }
 
-          if (earliestStart == null || latestEnd == null) {
+          if (!detection) {
             skippedCount++;
+            clipResults.push({
+              trackId: target.trackId,
+              elementId: target.elementId,
+              clipName,
+              applied: false,
+              reason:
+                detectionNotes.join(" | ") ||
+                "Unable to detect reliable speech region.",
+            });
             continue;
           }
 
-          // Gentle padding
-          const pad = 0.12;
-          earliestStart = Math.max(0, earliestStart - pad);
-          latestEnd = Math.min(effectiveDuration, latestEnd + pad);
-          if (latestEnd <= earliestStart) {
+          if (detection.trimEnd <= detection.trimStart) {
             skippedCount++;
+            clipResults.push({
+              trackId: target.trackId,
+              elementId: target.elementId,
+              clipName,
+              applied: false,
+              reason: "Detected speech window too small after padding.",
+            });
             continue;
           }
 
-          // Convert to absolute local times for trim command
-          const leftTime = element.trimStart + earliestStart;
-          const rightTime = element.trimStart + latestEnd;
+          const leftTime = element.trimStart + detection.trimStart;
+          const rightTime = element.trimStart + detection.trimEnd;
 
           const result = trim({
             plan: {
@@ -736,24 +883,146 @@ function executeDeadspaceTrimInstruction({
             },
           });
 
-          if (result.success) successCount++;
-          else
-            errors.push(result.error || `Trim failed on ${target.elementId}`);
+          if (result.success) {
+            successCount++;
+            const originalVisibleStart = element.trimStart;
+            const originalVisibleEnd =
+              element.duration - element.trimStart - element.trimEnd;
+            const headRemovedAmount = leftTime - originalVisibleStart;
+            const tailRemovedAmount = originalVisibleEnd - rightTime;
+            clipResults.push({
+              trackId: target.trackId,
+              elementId: target.elementId,
+              clipName,
+              applied: true,
+              start: leftTime,
+              end: rightTime,
+              confidence: detection.confidence,
+              source: detection.source,
+              speechStart: element.trimStart + detection.speechStart,
+              speechEnd: element.trimStart + detection.speechEnd,
+              removedHead:
+                headRemovedAmount > 0.01
+                  ? {
+                      start: originalVisibleStart,
+                      end: leftTime,
+                    }
+                  : undefined,
+              removedTail:
+                tailRemovedAmount > 0.01
+                  ? {
+                      start: rightTime,
+                      end: originalVisibleEnd,
+                    }
+                  : undefined,
+              transcriptSegments: detection.transcriptSegments,
+            });
+          } else {
+            const errMessage =
+              result.error || `Trim failed on ${target.elementId}`;
+            errors.push(errMessage);
+            clipResults.push({
+              trackId: target.trackId,
+              elementId: target.elementId,
+              clipName,
+              applied: false,
+              reason: errMessage,
+            });
+          }
         } catch (err: any) {
-          errors.push(err?.message || String(err));
+          const message = err?.message || String(err);
+          errors.push(message);
+          clipResults.push({
+            trackId: target.trackId,
+            elementId: target.elementId,
+            clipName,
+            applied: false,
+            reason: message,
+          });
+        } finally {
+          processedCount++;
+          updateCommandProgress();
+          if (audioCtx && typeof audioCtx.close === "function") {
+            try {
+              await audioCtx.close();
+            } catch {}
+          }
+          clipIndex++;
         }
       }
 
+      const trimmedClips = clipResults.filter((clip) => clip.applied);
+      detailLines = trimmedClips.map((clip) => {
+        const firstTranscript =
+          clip.transcriptSegments && clip.transcriptSegments.length > 0
+            ? clip.transcriptSegments[0].text.trim().replace(/\s+/g, " ")
+            : undefined;
+        const lastTranscript =
+          clip.transcriptSegments && clip.transcriptSegments.length > 0
+            ? clip.transcriptSegments[
+                clip.transcriptSegments.length - 1
+              ].text.trim().replace(/\s+/g, " ")
+            : undefined;
+
+        const segments: string[] = [];
+        if (clip.removedHead) {
+          let label = `${formatTimestamp(
+            clip.removedHead.start
+          )}–${formatTimestamp(clip.removedHead.end)}`;
+          if (firstTranscript) {
+            label += ` "${firstTranscript}"`;
+          }
+          segments.push(label);
+        }
+        if (clip.removedTail) {
+          let label = `${formatTimestamp(
+            clip.removedTail.start
+          )}–${formatTimestamp(clip.removedTail.end)}`;
+          if (lastTranscript) {
+            label += ` "${lastTranscript}"`;
+          }
+          segments.push(label);
+        }
+        const segmentText = segments.length
+          ? `from ${segments.join(" and ")}`
+          : "but no additional silence was removed";
+        const sourceLabel =
+          clip.source === "remote"
+            ? "via agent service"
+            : clip.source === "local"
+              ? "via local detector"
+              : clip.source === "transcript"
+                ? "via transcript"
+                : undefined;
+        const transcriptNote =
+          clip.source === "transcript" && segments.length === 0 && lastTranscript
+            ? ` (last line: "${lastTranscript}")`
+            : "";
+        return `${
+          clip.clipName ?? formatOrdinalClip(1)
+        }: trimmed dead space ${segmentText}${
+          sourceLabel ? ` (${sourceLabel})` : ""
+        }${transcriptNote}.`;
+      });
+
       if (successCount > 0 && errors.length === 0) {
+        const baseMessage = `Trimmed dead space on ${successCount} clip${successCount > 1 ? "s" : ""}.`;
+        const detailText = detailLines.length
+          ? `\n${detailLines.join("\n")}`
+          : "";
         ui.updateMessageById(bubbleId, {
-          content: `Trimmed dead space on ${successCount} clip${successCount > 1 ? "s" : ""}.`,
+          content: `${baseMessage}${detailText}`,
         });
         toast.success(
           `Trimmed dead space on ${successCount} clip${successCount > 1 ? "s" : ""}`
         );
       } else if (successCount > 0) {
+        const baseMessage = `Partial: ${successCount} trimmed, ${skippedCount} skipped, ${errors.length} errors.`;
+        const detailText = detailLines.length
+          ? `\n${detailLines.join("\n")}`
+          : "";
         ui.updateMessageById(bubbleId, {
-          content: `Partial: ${successCount} trimmed, ${skippedCount} skipped, ${errors.length} errors.`,
+          content: `${baseMessage}${detailText}`,
         });
         toast.warning(
           `Trimmed dead space on ${successCount}, ${skippedCount} skipped, ${errors.length} errors`
@@ -766,6 +1035,10 @@ function executeDeadspaceTrimInstruction({
           `No clips trimmed. ${skippedCount} skipped${errors.length ? ", errors occurred" : ""}`
         );
       }
+
+      if (errors.length) {
+        console.warn("Deadspace trim warnings:", errors);
+      }
     } catch (e: any) {
       console.error("Deadspace trim failed:", e);
       ui.updateMessageById(bubbleId, { content: "Deadspace trim failed." });
@@ -777,8 +1050,13 @@ function executeDeadspaceTrimInstruction({
 
   return {
     success: true,
-    targetsResolved: 0,
+    targetsResolved: targets.length,
     message: instruction.description || "Trimming dead space…",
+    meta: {
+      totalTargets,
+      results: clipResults,
+      details: detailLines,
+    },
   };
 }
 
@@ -854,6 +1132,103 @@ function detectSpeechWindow(
   const conf = act / Math.max(1, endFrame - startFrame + 1);
 
   return { start: startSec, end: endSec, confidence: conf };
+}
+
+type RemoteDeadspaceResponse = {
+  speechDetected: boolean;
+  speechStart: number;
+  speechEnd: number;
+  speechDuration: number;
+  trimStart: number;
+  trimEnd: number;
+  duration: number;
+  confidence?: number;
+  padding?: {
+    pre?: number;
+    post?: number;
+  };
+  analysisSource?: "vad" | "transcript";
+  transcript?: {
+    start?: number | null;
+    end?: number | null;
+    segments?: TranscribedSegment[];
+    error?: string;
+  };
+  error?: string;
+  traceback?: string;
+};
+
+async function requestRemoteDeadspaceTrim({
+  arrayBuffer,
+  prePadding,
+  postPadding,
+  language,
+}: {
+  arrayBuffer: ArrayBuffer;
+  prePadding: number;
+  postPadding: number;
+  language?: string;
+}): Promise<RemoteDeadspaceResponse | null> {
+  try {
+    const { encryptedData, key, iv } = await encryptWithRandomKey(arrayBuffer);
+    const encryptedBlob = new Blob([encryptedData], {
+      type: "audio/wav",
+    });
+
+    const presign = await fetch("/api/get-upload-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fileExtension: "wav" }),
+    });
+
+    if (!presign.ok) {
+      const message = await presign
+        .json()
+        .catch(() => ({} as any))
+        .then((data) => data?.error || `Presign failed (${presign.status})`);
+      throw new Error(message);
+    }
+
+    const { uploadUrl, fileName } = await presign.json();
+
+    const put = await fetch(uploadUrl, {
+      method: "PUT",
+      body: encryptedBlob,
+    });
+    if (!put.ok) {
+      throw new Error(`Upload failed (${put.status})`);
+    }
+
+    const response = await fetch("/api/trim-deadspace", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: fileName,
+        language: (language || "auto").toLowerCase(),
+        prePadding,
+        postPadding,
+        decryptionKey: arrayBufferToBase64(key),
+        iv: arrayBufferToBase64(iv),
+      }),
+    });
+
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        (payload && (payload as any).error) ||
+        `Deadspace API error (${response.status})`;
+      throw new Error(message);
+    }
+
+    if (!payload || typeof payload !== "object") {
+      throw new Error("Deadspace API returned invalid payload.");
+    }
+
+    return payload as RemoteDeadspaceResponse;
+  } catch (error) {
+    console.warn("Remote deadspace trim unavailable:", error);
+    return null;
+  }
 }
 
 /**
@@ -1423,4 +1798,12 @@ function getOrdinalSuffix(n: number) {
 
 function formatOrdinalClip(index: number) {
   return `${index}${getOrdinalSuffix(index)} clip`;
+}
+
+function formatTimestamp(seconds: number): string {
+  const clamped = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
+  const minutes = Math.floor(clamped / 60);
+  const sec = clamped - minutes * 60;
+  const secString = sec.toFixed(2).padStart(5, "0");
+  return `${minutes.toString().padStart(2, "0")}:${secString}`;
 }

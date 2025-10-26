@@ -181,7 +181,7 @@ export async function GET(request: NextRequest) {
         safeSend({ event: "log", message: `Planning for: ${prompt}` });
         safeSend({
           event: "log",
-          message: "Planner mode: OpenAI (LLM only)",
+          message: "Planner mode: OpenAI with rule shortcuts",
         });
         if (!env.OPENAI_API_KEY) {
           safeSend({

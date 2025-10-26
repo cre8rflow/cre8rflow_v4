@@ -17,6 +17,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { TextElement } from "@/types/timeline";
+import {
+  buildCaptionChunksFromSegments,
+  type TranscribedSegment,
+} from "@/lib/transcription-format";
 
 export const languages: Language[] = [
   { code: "US", name: "English" },
@@ -111,56 +115,20 @@ export function Captions() {
         throw new Error(error.message || "Transcription failed");
       }
 
-      const { text, segments } = await transcriptionResponse.json();
+      const {
+        text,
+        segments,
+      }: { text: string; segments: TranscribedSegment[] } =
+        await transcriptionResponse.json();
 
       console.log("Transcription completed:", { text, segments });
 
-      const shortCaptions: Array<{
-        text: string;
-        startTime: number;
-        duration: number;
-      }> = [];
-
-      let globalEndTime = 0; // Track the end time of the last caption globally
-
-      segments.forEach((segment: any) => {
-        const words = segment.text.trim().split(/\s+/);
-        const segmentDuration = segment.end - segment.start;
-        const wordsPerSecond = words.length / segmentDuration;
-
-        // Split into chunks of 2-4 words
-        const chunks: string[] = [];
-        for (let i = 0; i < words.length; i += 3) {
-          chunks.push(words.slice(i, i + 3).join(" "));
-        }
-
-        // Calculate timing for each chunk to place them sequentially
-        let chunkStartTime = segment.start;
-        chunks.forEach((chunk) => {
-          const chunkWords = chunk.split(/\s+/).length;
-          const chunkDuration = Math.max(0.8, chunkWords / wordsPerSecond); // Minimum 0.8s per chunk
-
-          let adjustedStartTime = chunkStartTime;
-
-          // Prevent overlapping: if this caption would start before the last one ends,
-          // start it right after the last one ends
-          if (adjustedStartTime < globalEndTime) {
-            adjustedStartTime = globalEndTime;
-          }
-
-          shortCaptions.push({
-            text: chunk,
-            startTime: adjustedStartTime,
-            duration: chunkDuration,
-          });
-
-          // Update global end time
-          globalEndTime = adjustedStartTime + chunkDuration;
-
-          // Next chunk starts when this one ends (for within-segment timing)
-          chunkStartTime += chunkDuration;
-        });
+      const shortCaptions = buildCaptionChunksFromSegments(segments, {
+        wordsPerChunk: 3,
       });
+      if (shortCaptions.length === 0) {
+        throw new Error("No speech detected to generate captions.");
+      }
 
       // Create a single track for all captions
       const captionTrackId = insertTrackAt("text", 0);

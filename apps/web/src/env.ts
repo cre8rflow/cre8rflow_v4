@@ -24,6 +24,7 @@ export const env = createEnv({
     R2_BUCKET_NAME: z.string().optional(),
     // Modal transcription
     MODAL_TRANSCRIPTION_URL: z.string().optional(),
+    MODAL_DEADSPACE_URL: z.string().optional(),
     // Supabase (for V3 integration - persistent storage)
     SUPABASE_URL: z.string().url().optional(),
     SUPABASE_SERVICE_KEY: z.string().optional(),
@@ -53,6 +54,7 @@ export const env = createEnv({
     R2_BUCKET_NAME: process.env.R2_BUCKET_NAME,
     // Modal transcription
     MODAL_TRANSCRIPTION_URL: process.env.MODAL_TRANSCRIPTION_URL,
+    MODAL_DEADSPACE_URL: process.env.MODAL_DEADSPACE_URL,
     // Supabase (for V3 integration - persistent storage)
     SUPABASE_URL: process.env.SUPABASE_URL,
     SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY,

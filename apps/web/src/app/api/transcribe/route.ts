@@ -25,6 +25,17 @@ const modalResponseSchema = z.object({
       avg_logprob: z.number(),
       compression_ratio: z.number(),
       no_speech_prob: z.number(),
+      words: z
+        .array(
+          z.object({
+            start: z.number(),
+            end: z.number(),
+            text: z.string(),
+          })
+        )
+        .optional(),
+      firstWordStart: z.number().optional(),
+      lastWordEnd: z.number().optional(),
     })
   ),
   language: z.string(),
@@ -44,6 +55,17 @@ const apiResponseSchema = z.object({
       avg_logprob: z.number(),
       compression_ratio: z.number(),
       no_speech_prob: z.number(),
+      words: z
+        .array(
+          z.object({
+            start: z.number(),
+            end: z.number(),
+            text: z.string(),
+          })
+        )
+        .optional(),
+      firstWordStart: z.number().optional(),
+      lastWordEnd: z.number().optional(),
     })
   ),
   language: z.string(),
