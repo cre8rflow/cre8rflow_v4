@@ -126,8 +126,19 @@ async function twelveLabsRequest(endpoint: string, options: RequestInit = {}) {
   // Prepare headers - don't set Content-Type for FormData
   const headers: Record<string, string> = {
     "X-API-Key": env.TWELVELABS_API_KEY,
-    ...options.headers,
   };
+  const optHeaders = options.headers;
+  if (optHeaders instanceof Headers) {
+    optHeaders.forEach((value, key) => {
+      headers[key] = value;
+    });
+  } else if (Array.isArray(optHeaders)) {
+    for (const [key, value] of optHeaders) headers[key] = value;
+  } else if (optHeaders && typeof optHeaders === "object") {
+    for (const [key, value] of Object.entries(optHeaders as Record<string, string>)) {
+      headers[key] = value;
+    }
+  }
 
   // Only set Content-Type to application/json if not FormData
   if (!(options.body instanceof FormData)) {
@@ -353,19 +364,15 @@ export async function searchVideos(
     const form = new FormData();
     form.append("query_text", query);
     form.append("index_id", indexId);
-
-    domains.forEach((domain) => form.append("search_options", domain));
-
-    if (searchOptions?.page_limit != null) {
-      form.append("page_limit", String(searchOptions.page_limit));
-    }
-    if (searchOptions?.sort_option) {
-      form.append("sort_option", searchOptions.sort_option);
-    }
-    if (searchOptions?.threshold) {
-      form.append("threshold", searchOptions.threshold);
-    }
+    domains.forEach((d) => form.append("search_options", d));
+    if (searchOptions?.page_limit != null) form.append("page_limit", String(searchOptions.page_limit));
+    if (searchOptions?.sort_option) form.append("sort_option", searchOptions.sort_option);
+    if (searchOptions?.threshold) form.append("threshold", searchOptions.threshold);
     if (videoIds && videoIds.length) {
+      // Try both conventional forms to satisfy API expectations
+      for (const vid of videoIds) {
+        form.append("video_ids", vid);
+      }
       for (const vid of videoIds) {
         form.append("video_ids[]", vid);
       }

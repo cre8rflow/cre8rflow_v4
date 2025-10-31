@@ -9,6 +9,7 @@ export interface MediaTwelveLabsRow {
   id?: string;
   media_id: string;
   project_id: string;
+  content_hash?: string;
   // V4 naming (kept for compatibility)
   twelve_labs_video_id?: string;
   twelve_labs_task_id?: string;
@@ -85,6 +86,7 @@ export async function saveTwelveLabsMetadata(
         },
         body: JSON.stringify({
           ...data,
+          content_hash: (data as any).content_hash ?? data.metadata?.contentHash,
           // Mirror fields across V3/V4 schemas for compatibility
           video_id: data.video_id ?? data.twelve_labs_video_id,
           task_id: data.task_id ?? data.twelve_labs_task_id,
@@ -126,6 +128,8 @@ export async function updateTwelveLabsStatus(
         method: "PATCH",
         body: JSON.stringify({
           ...updates,
+          content_hash:
+            (updates as any).content_hash ?? (updates as any)?.metadata?.contentHash,
           // Keep both naming schemes updated
           video_id: updates.video_id ?? updates.twelve_labs_video_id,
           task_id: updates.task_id ?? updates.twelve_labs_task_id,
@@ -213,6 +217,7 @@ export interface MediaIndexJobRow {
   id?: string;
   project_id: string;
   media_id: string;
+  content_hash?: string | null;
   storage_key?: string | null;
   index_id?: string | null;
   task_id?: string | null;

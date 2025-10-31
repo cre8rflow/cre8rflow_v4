@@ -108,7 +108,7 @@ export class TwelveLabsClient {
   async uploadVideoFile(
     videoFile: File,
     language = "en",
-    options?: { projectId?: string; mediaId?: string }
+    options?: { projectId?: string; mediaId?: string; contentHash?: string }
   ): Promise<ClientUploadResponse> {
     try {
       console.log("🎬 Uploading video file via API:", videoFile.name);
@@ -118,6 +118,7 @@ export class TwelveLabsClient {
       formData.append("language", language);
       if (options?.projectId) formData.append("projectId", options.projectId);
       if (options?.mediaId) formData.append("mediaId", options.mediaId);
+      if (options?.contentHash) formData.append("contentHash", options.contentHash);
 
       const response = await fetch(`${this.baseUrl}/upload`, {
         method: "POST",
@@ -348,7 +349,7 @@ export class TwelveLabsClient {
     videoFile: File,
     onStatusUpdate?: (statusUpdate: ClientStatusUpdate) => void,
     language = "en",
-    options?: { projectId?: string; mediaId?: string }
+    options?: { projectId?: string; mediaId?: string; contentHash?: string }
   ): Promise<{ success: boolean; taskId?: string; error?: string }> {
     try {
       console.log(`🎬 Starting background indexing via API: ${videoFile.name}`);
@@ -357,6 +358,7 @@ export class TwelveLabsClient {
       const uploadResponse = await this.uploadVideoFile(videoFile, language, {
         projectId: options?.projectId,
         mediaId: options?.mediaId,
+        contentHash: options?.contentHash,
       });
 
       if (!uploadResponse.success || !uploadResponse.taskId) {
