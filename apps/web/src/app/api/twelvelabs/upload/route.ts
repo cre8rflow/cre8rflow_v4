@@ -17,6 +17,7 @@ export async function POST(request: NextRequest) {
     // Optional identifiers to allow server-side persistence
     let projectId: string | undefined;
     let mediaId: string | undefined;
+    let contentHash: string | undefined;
 
     if (contentType.includes("multipart/form-data")) {
       // Handle FormData (file upload)
@@ -25,6 +26,7 @@ export async function POST(request: NextRequest) {
       language = (formData.get("language") as string) || "en";
       projectId = (formData.get("projectId") as string) || undefined;
       mediaId = (formData.get("mediaId") as string) || undefined;
+      contentHash = (formData.get("contentHash") as string) || undefined;
 
       if (!videoFile) {
         console.error("❌ Video file is required");
@@ -109,7 +111,11 @@ export async function POST(request: NextRequest) {
           progress: result.task?.progress ?? 0,
           task_id: result.task?._id,
           video_id: result.task?.video_id,
-          metadata: result.task ? { task: result.task } : undefined,
+          metadata: result.task
+            ? { task: result.task, contentHash }
+            : contentHash
+              ? { contentHash }
+              : undefined,
         });
         await saveTwelveLabsMetadata({
           media_id: mediaId,
@@ -123,7 +129,11 @@ export async function POST(request: NextRequest) {
           task_id: result.task?._id,
           video_id: result.task?.video_id,
           status: "pending",
-          metadata: result.task ? { task: result.task } : undefined,
+          metadata: result.task
+            ? { task: result.task, contentHash }
+            : contentHash
+              ? { contentHash }
+              : undefined,
         });
         console.log("💾 Initial Twelvelabs metadata upserted");
       }

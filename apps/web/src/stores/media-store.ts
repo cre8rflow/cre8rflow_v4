@@ -161,9 +161,30 @@ export const useMediaStore = create<MediaStore>((set, get) => ({
   isLoading: false,
 
   addMediaFile: async (projectId, file) => {
+    // Compute a stable content fingerprint (first+last 2MB SHA-256) to reconcile across sessions
+    const computeFileFingerprint = async (f: File): Promise<string> => {
+      const chunkSize = 2 * 1024 * 1024; // 2MB
+      const startBlob = f.slice(0, Math.min(chunkSize, f.size));
+      const endBlob =
+        f.size > chunkSize ? f.slice(Math.max(0, f.size - chunkSize), f.size) : new Blob([]);
+      const concat = await new Blob([startBlob, endBlob]).arrayBuffer();
+      const hash = await crypto.subtle.digest("SHA-256", concat);
+      const bytes = Array.from(new Uint8Array(hash));
+      return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
+    };
+
+    let contentHash: string | undefined;
+    try {
+      contentHash = await computeFileFingerprint(file.file);
+    } catch (e) {
+      console.warn("Failed to compute contentHash, continuing without it", e);
+    }
+
     const newItem: MediaFile = {
       ...file,
       id: generateUUID(),
+      contentHash,
+      fileSize: file.file?.size,
       // Initialize Twelvelabs fields for videos
       ...(file.type === "video"
         ? {
@@ -221,6 +242,7 @@ export const useMediaStore = create<MediaStore>((set, get) => ({
                   task_id: statusUpdate.task._id,
                   project_id: projectId,
                   media_id: newItem.id,
+                  content_hash: newItem.contentHash ?? "",
                 });
                 await fetch(`/api/twelvelabs/status?${params.toString()}`);
               }
@@ -232,7 +254,7 @@ export const useMediaStore = create<MediaStore>((set, get) => ({
             }
           },
           "en",
-          { projectId, mediaId: newItem.id }
+          { projectId, mediaId: newItem.id, contentHash: newItem.contentHash }
         )
         .catch((error) => {
           console.error(
@@ -364,10 +386,23 @@ export const useMediaStore = create<MediaStore>((set, get) => ({
           if (resp.ok) {
             const json = await resp.json();
             const restored = (json.restoredStatus || {}) as Record<string, any>;
+            const byHash = (json.hashIndex || {}) as Record<string, any>;
 
             let mediaItemsWithStatus = updatedMediaItems.map((item) => {
               if (item.type === "video" && restored[item.id]) {
                 const s = restored[item.id];
+                return {
+                  ...item,
+                  twelveLabsVideoId: s.twelveLabsVideoId,
+                  twelveLabsTaskId: s.twelveLabsTaskId,
+                  indexingStatus: s.status as IndexingStatus,
+                  indexingProgress: s.progress,
+                  indexingError: s.error,
+                };
+              }
+              // If not found by mediaId, try to reconcile by contentHash
+              if (item.type === "video" && item.contentHash && byHash[item.contentHash]) {
+                const s = byHash[item.contentHash];
                 return {
                   ...item,
                   twelveLabsVideoId: s.twelveLabsVideoId,

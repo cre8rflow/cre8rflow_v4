@@ -9,6 +9,9 @@ export interface MediaFile {
   name: string;
   type: MediaType;
   file: File;
+  // Stable fingerprint to reconcile across sessions/imports
+  contentHash?: string;
+  fileSize?: number;
   url?: string; // Object URL for preview
   thumbnailUrl?: string; // For video thumbnails
   duration?: number; // For video/audio duration

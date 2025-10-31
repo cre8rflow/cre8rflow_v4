@@ -54,12 +54,14 @@ export async function GET(request: NextRequest) {
       getMediaIndexJobs(projectId, mediaIds ?? undefined),
     ]);
 
-    // Transform the data into a more convenient format, merging by media_id
+    // Transform the data into a more convenient format
+    // restoredStatus keyed by media_id (legacy) and a parallel index by contentHash for reconciliation
     const restoredStatus: Record<string, any> = {};
+    const hashIndex: Record<string, any> = {};
 
     // Seed from legacy table
     for (const item of legacy) {
-      restoredStatus[item.media_id] = {
+      const entry = {
         mediaId: item.media_id,
         projectId: item.project_id,
         twelveLabsVideoId: item.twelve_labs_video_id ?? item.video_id,
@@ -70,7 +72,10 @@ export async function GET(request: NextRequest) {
         metadata: item.metadata,
         createdAt: item.created_at,
         updatedAt: item.updated_at,
-      };
+      } as any;
+      restoredStatus[item.media_id] = entry;
+      const hash = (item as any).content_hash || item.metadata?.contentHash;
+      if (hash) hashIndex[hash] = entry;
     }
 
     // Merge/override from jobs table (prefer freshest info)
@@ -85,7 +90,7 @@ export async function GET(request: NextRequest) {
               : "pending";
 
       const current = restoredStatus[job.media_id] ?? {};
-      restoredStatus[job.media_id] = {
+      const entry = {
         ...current,
         mediaId: job.media_id,
         projectId: job.project_id,
@@ -97,7 +102,10 @@ export async function GET(request: NextRequest) {
         error: job.error_message ?? current.error,
         metadata: job.metadata ?? current.metadata,
         updatedAt: current.updatedAt, // keep if present; jobs doesn't store updatedAt in our helper
-      };
+      } as any;
+      restoredStatus[job.media_id] = entry;
+      const hash = (job as any).content_hash || job.metadata?.contentHash;
+      if (hash) hashIndex[hash] = entry;
     }
 
     const count = Object.keys(restoredStatus).length;
@@ -106,6 +114,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       restoredStatus,
+      hashIndex,
       count,
       message: "Status restored successfully",
     });

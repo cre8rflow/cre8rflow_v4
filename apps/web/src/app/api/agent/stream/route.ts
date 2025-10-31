@@ -177,12 +177,9 @@ export async function GET(request: NextRequest) {
           safeSend({ event: "thought_done" });
         });
 
-        // Start with planning log
-        safeSend({ event: "log", message: `Planning for: ${prompt}` });
-        safeSend({
-          event: "log",
-          message: "Planner mode: OpenAI with rule shortcuts",
-        });
+        // Start with planning log (user-friendly)
+        safeSend({ event: "log", message: "Planning..." });
+        safeSend({ event: "log", message: "Planning..." });
         if (!env.OPENAI_API_KEY) {
           safeSend({
             event: "error",
@@ -199,10 +196,7 @@ export async function GET(request: NextRequest) {
         const configured = env.OPENAI_RESP_FORMAT || "json_object";
         const effective =
           configured === "json_schema" ? "json_object (downgraded)" : configured;
-        safeSend({
-          event: "log",
-          message: `Calling OpenAI model: ${model} (response_format=${effective})`,
-        });
+        safeSend({ event: "log", message: "Planning..." });
 
         // Call planner (OpenAI LLM)
         planInstructions({ prompt, metadata })
@@ -227,7 +221,7 @@ export async function GET(request: NextRequest) {
                 const summaryQuery = formatSearchQuery(normalized) || query;
                 safeSend({
                   event: "log",
-                  message: `Calling TwelveLabs for: ${summaryQuery}`,
+                  message: `Analyzing: ${summaryQuery}`,
                 });
 
                 // Check indexing readiness using Supabase (projectId from metadata)
@@ -286,6 +280,19 @@ export async function GET(request: NextRequest) {
                       message:
                         "TwelveLabs returned matches, but none are on the current timeline; ignoring result.",
                     });
+                    // Diagnostics: show ids used vs ids returned
+                    try {
+                      const used = (videoIdsUsed || []).join(", ");
+                      const returnedIds = Array.from(
+                        new Set(allMatches.map((m) => m.video_id))
+                      )
+                        .slice(0, 5)
+                        .join(", ");
+                      safeSend({
+                        event: "log",
+                        message: `TwelveLabs diagnostics: videoIdsUsed=[${used}] returnedIds=[${returnedIds}]`,
+                      });
+                    } catch {}
                   }
 
                   const top = filteredMatches[0];

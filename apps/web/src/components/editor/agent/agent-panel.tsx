@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
@@ -76,6 +76,7 @@ export function AgentPanel() {
   const runAgent = useAgentOrchestrator();
   const eventSourceRef = useRef<EventSource | null>(null);
   const thinkingLogIdRef = useRef<string | null>(null);
+  const overlayHideTimeoutRef = useRef<number | null>(null);
 
   const {
     status,
@@ -102,6 +103,7 @@ export function AgentPanel() {
 
   const [prompt, setPrompt] = useState("");
   const endRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const isRunning = status === "running";
   const isPromptEmpty = prompt.trim().length === 0;
@@ -109,6 +111,10 @@ export function AgentPanel() {
   useEffect(() => {
     return () => {
       eventSourceRef.current?.close();
+      if (overlayHideTimeoutRef.current) {
+        window.clearTimeout(overlayHideTimeoutRef.current);
+        overlayHideTimeoutRef.current = null;
+      }
     };
   }, []);
 
@@ -125,6 +131,10 @@ export function AgentPanel() {
 
     eventSourceRef.current?.close();
     thinkingLogIdRef.current = null;
+    if (overlayHideTimeoutRef.current) {
+      window.clearTimeout(overlayHideTimeoutRef.current);
+      overlayHideTimeoutRef.current = null;
+    }
 
     // Chat UX: add user's message and mark started
     addUserMessage(trimmed);
@@ -198,11 +208,27 @@ export function AgentPanel() {
 
               // Finalize streaming
               updateMessageById(placeholderId, { streaming: false });
+              // Hide preview banner 8s after final feedback is sent
+              if (overlayHideTimeoutRef.current) {
+                window.clearTimeout(overlayHideTimeoutRef.current);
+              }
+              overlayHideTimeoutRef.current = window.setTimeout(() => {
+                reset();
+                overlayHideTimeoutRef.current = null;
+              }, 8000);
             } catch {
               updateMessageById(placeholderId, {
                 content: "Made timeline adjustments.",
                 streaming: false,
               });
+              // Hide preview banner 8s after final fallback feedback
+              if (overlayHideTimeoutRef.current) {
+                window.clearTimeout(overlayHideTimeoutRef.current);
+              }
+              overlayHideTimeoutRef.current = window.setTimeout(() => {
+                reset();
+                overlayHideTimeoutRef.current = null;
+              }, 8000);
             }
           })();
           eventSourceRef.current?.close();
@@ -210,6 +236,14 @@ export function AgentPanel() {
           markError(data.message || "Agent error");
           addAgentMessage(data.message || "Agent error");
           eventSourceRef.current?.close();
+          // Also auto-hide banner after error feedback
+          if (overlayHideTimeoutRef.current) {
+            window.clearTimeout(overlayHideTimeoutRef.current);
+          }
+          overlayHideTimeoutRef.current = window.setTimeout(() => {
+            reset();
+            overlayHideTimeoutRef.current = null;
+          }, 8000);
         }
       } catch {
         // ignore malformed lines
@@ -346,11 +380,20 @@ export function AgentPanel() {
       <div className="border-t border-border/40 px-4 py-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="flex flex-1 items-center gap-2">
-            <div className="relative flex-1 group">
+              <div className="relative flex-1 group">
               <span className="pointer-events-none absolute inset-0 rounded-2xl border-5 border-border/50 transition-colors duration-200 group-hover:border-primary/60 group-focus-within:border-primary" />
-              <Input
+              <Textarea
+                ref={inputRef}
+                rows={1}
                 value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
+                onChange={(e) => {
+                  setPrompt(e.target.value);
+                }}
+                onInput={(e) => {
+                  const el = e.currentTarget;
+                  el.style.height = "auto";
+                  el.style.height = `${el.scrollHeight}px`;
+                }}
                 placeholder="Tell Kallio what to do…"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
@@ -359,7 +402,7 @@ export function AgentPanel() {
                   }
                 }}
                 disabled={isRunning}
-                className="relative h-11 rounded-2xl border-0 bg-surface-base/95 px-4 text-[16px] shadow-none focus-visible:border-0 focus-visible:ring-0 focus-visible:outline-hidden"
+                className="relative min-h-[44px] max-h-[40vh] rounded-2xl border-0 bg-surface-base/95 px-4 py-2 text-[18px] md:text-[18px] shadow-none focus-visible:border-0 focus-visible:ring-0 focus-visible:outline-hidden resize-none"
               />
             </div>
             <button

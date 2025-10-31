@@ -521,6 +521,12 @@ export function startAgentStream({
   };
 
   const handleFriendlyLog = (message: string) => {
+    if (message.startsWith("Analyzing:")) {
+      const summary = message.split("Analyzing:")[1]?.trim() ?? "";
+      beginSearchMessages(summary);
+      return;
+    }
+
     if (message.startsWith("Calling TwelveLabs for:")) {
       const summary = message.split("Calling TwelveLabs for:")[1]?.trim() ?? "";
       beginSearchMessages(summary);
