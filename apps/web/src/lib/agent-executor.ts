@@ -559,26 +559,21 @@ function executeDeadspaceTrimInstruction({
 
   const targets = resolveTargets(instruction.target);
   const commandStore = useTimelineCommandStore.getState();
+  const commandId = context?.commandId;
 
   if (targets.length === 0) {
     const message = `No targets found for: ${describeTargetSpec(instruction.target)}`;
     ui.updateMessageById(bubbleId, { content: message });
     toast.error(message);
+    if (commandId) {
+      commandStore.failCommand(commandId, message);
+    }
     endAsync();
     return {
       success: false,
       error: message,
       targetsResolved: 0,
     };
-  }
-
-  if (context?.commandId) {
-    commandStore.registerTargets({
-      id: context.commandId,
-      type: "deadspace",
-      description: instruction.description,
-      targets,
-    });
   }
 
   const ordinalLabels = targets.map((_, idx) => formatOrdinalClip(idx + 1));
@@ -611,19 +606,29 @@ function executeDeadspaceTrimInstruction({
   let processedCount = 0;
   const clipResults: DeadspaceClipResult[] = [];
   let detailLines: string[] = [];
+  const registeredTargets = new Set<string>();
 
   const updateCommandProgress = () => {
-    if (!context?.commandId || totalTargets === 0) return;
+    if (!commandId || totalTargets === 0) return;
     commandStore.updateProgress({
-      id: context.commandId,
+      id: commandId,
       progress: Math.min(1, processedCount / totalTargets),
       phase: "executing",
     });
   };
 
-  updateCommandProgress();
-
   (async () => {
+    // Yield to allow upstream command queue bookkeeping to settle before we
+    // assert long-running execution progress for this step.
+    await Promise.resolve();
+    if (commandId && totalTargets > 0) {
+      commandStore.updateProgress({
+        id: commandId,
+        progress: 0,
+        phase: "executing",
+      });
+    }
+
     const timeline = useTimelineStore.getState();
     try {
       // Single history entry for whole batch
@@ -865,6 +870,31 @@ type DetectionResult = {
           const leftTime = element.trimStart + detection.trimStart;
           const rightTime = element.trimStart + detection.trimEnd;
 
+          if (commandId) {
+            const targetKey = `${target.trackId}:${target.elementId}`;
+            if (!registeredTargets.has(targetKey)) {
+              commandStore.registerTargets({
+                id: commandId,
+                type: "deadspace",
+                description: instruction.description,
+                targets: [
+                  {
+                    trackId: target.trackId,
+                    elementId: target.elementId,
+                  },
+                ],
+              });
+              registeredTargets.add(targetKey);
+            }
+            if (totalTargets > 0) {
+              commandStore.updateProgress({
+                id: commandId,
+                progress: Math.min(1, processedCount / totalTargets),
+                phase: "executing",
+              });
+            }
+          }
+
           const result = trim({
             plan: {
               type: "trim",
@@ -879,6 +909,7 @@ type DetectionResult = {
                 showToast: false,
                 clamp: true,
                 precision: 3,
+                ripple: true,
               },
             },
           });
@@ -1036,6 +1067,22 @@ type DetectionResult = {
         );
       }
 
+      if (commandId) {
+        if (errors.length) {
+          commandStore.failCommand(
+            commandId,
+            errors.join(" | ") || "Deadspace trim encountered errors"
+          );
+        } else {
+          commandStore.updateProgress({
+            id: commandId,
+            progress: 1,
+            phase: "complete",
+          });
+          commandStore.completeCommand(commandId);
+        }
+      }
+
       if (errors.length) {
         console.warn("Deadspace trim warnings:", errors);
       }
@@ -1043,6 +1090,9 @@ type DetectionResult = {
       console.error("Deadspace trim failed:", e);
       ui.updateMessageById(bubbleId, { content: "Deadspace trim failed." });
       toast.error(e?.message || "Deadspace trim failed");
+      if (commandId) {
+        commandStore.failCommand(commandId, e?.message || "Deadspace trim failed");
+      }
     } finally {
       endAsync();
     }
