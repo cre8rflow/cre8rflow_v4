@@ -607,6 +607,7 @@ function executeDeadspaceTrimInstruction({
   const clipResults: DeadspaceClipResult[] = [];
   let detailLines: string[] = [];
   const registeredTargets = new Set<string>();
+  const tracksToCompact = new Set<string>();
 
   const updateCommandProgress = () => {
     if (!commandId || totalTargets === 0) return;
@@ -886,13 +887,6 @@ type DetectionResult = {
               });
               registeredTargets.add(targetKey);
             }
-            if (totalTargets > 0) {
-              commandStore.updateProgress({
-                id: commandId,
-                progress: Math.min(1, processedCount / totalTargets),
-                phase: "executing",
-              });
-            }
           }
 
           const result = trim({
@@ -909,7 +903,7 @@ type DetectionResult = {
                 showToast: false,
                 clamp: true,
                 precision: 3,
-                ripple: true,
+                ripple: false,
               },
             },
           });
@@ -948,6 +942,7 @@ type DetectionResult = {
                   : undefined,
               transcriptSegments: detection.transcriptSegments,
             });
+            tracksToCompact.add(target.trackId);
           } else {
             const errMessage =
               result.error || `Trim failed on ${target.elementId}`;
@@ -980,6 +975,28 @@ type DetectionResult = {
           }
           clipIndex++;
         }
+      }
+
+      const tracksNeedingCompaction = Array.from(tracksToCompact);
+      if (tracksNeedingCompaction.length > 0) {
+        ui.updateMessageById(bubbleId, {
+          content: "Aligning trimmed clips…",
+        });
+        if (commandId) {
+          const progressValue =
+            totalTargets > 0
+              ? Math.min(1, processedCount / totalTargets)
+              : 1;
+          commandStore.updateProgress({
+            id: commandId,
+            progress: progressValue,
+            phase: "executing",
+          });
+        }
+        const timelineActionsAfter = useTimelineStore.getState();
+        timelineActionsAfter.compactTracksGaps(tracksNeedingCompaction, {
+          pushHistory: false,
+        });
       }
 
       const trimmedClips = clipResults.filter((clip) => clip.applied);

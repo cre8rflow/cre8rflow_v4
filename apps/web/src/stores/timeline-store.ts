@@ -15,7 +15,7 @@ import { useMediaStore, getMediaAspectRatio } from "./media-store";
 import { MediaFile, MediaType } from "@/types/media";
 import { findBestCanvasPreset } from "@/lib/editor-utils";
 import { storageService } from "@/lib/storage/storage-service";
-import { useProjectStore } from "./project-store";
+import { useProjectStore, DEFAULT_FPS } from "./project-store";
 import { useSceneStore } from "./scene-store";
 import { generateUUID } from "@/lib/utils";
 import { TIMELINE_CONSTANTS } from "@/constants/timeline-constants";
@@ -131,6 +131,10 @@ interface TimelineStore {
     elementId: string,
     startTime: number,
     pushHistory?: boolean
+  ) => void;
+  compactTracksGaps: (
+    trackIds: string[],
+    options?: { pushHistory?: boolean }
   ) => void;
   toggleTrackMute: (trackId: string) => void;
   splitAndKeepLeft: (
@@ -844,6 +848,84 @@ export const useTimelineStore = create<TimelineStore>((set, get) => {
             : track
         )
       );
+    },
+
+    compactTracksGaps: (trackIds, options) => {
+      const uniqueTrackIds = Array.from(new Set(trackIds)).filter(Boolean);
+      if (uniqueTrackIds.length === 0) return;
+
+      const { pushHistory = true } = options ?? {};
+      const tracks = get()._tracks;
+      const projectState = useProjectStore.getState();
+      const fps = projectState.activeProject?.fps ?? DEFAULT_FPS;
+      const roundToFrame = (value: number) =>
+        Math.max(0, Math.round(value * fps) / fps);
+      const EPSILON = 1e-4;
+
+      let hasChanges = false;
+
+      const nextTracks = tracks.map((track) => {
+        if (!uniqueTrackIds.includes(track.id)) {
+          return track;
+        }
+
+        if (track.elements.length === 0) {
+          return track;
+        }
+
+        const sortedByStart = [...track.elements].sort(
+          (a, b) => a.startTime - b.startTime
+        );
+
+        const desiredStarts = new Map<string, number>();
+        let cursor: number | null = null;
+
+        for (const element of sortedByStart) {
+          const effectiveDuration = Math.max(
+            0,
+            element.duration - element.trimStart - element.trimEnd
+          );
+
+          if (cursor == null) {
+            cursor = roundToFrame(element.startTime + effectiveDuration);
+            continue;
+          }
+
+          const targetStart = roundToFrame(cursor);
+
+          if (element.startTime > targetStart + EPSILON) {
+            desiredStarts.set(element.id, targetStart);
+            cursor = roundToFrame(targetStart + effectiveDuration);
+          } else {
+            cursor = roundToFrame(element.startTime + effectiveDuration);
+          }
+        }
+
+        if (desiredStarts.size === 0) {
+          return track;
+        }
+
+        hasChanges = true;
+
+        return {
+          ...track,
+          elements: track.elements.map((element) =>
+            desiredStarts.has(element.id)
+              ? { ...element, startTime: desiredStarts.get(element.id)! }
+              : element
+          ),
+        };
+      });
+
+      if (!hasChanges) {
+        return;
+      }
+
+      if (pushHistory) {
+        get().pushHistory();
+      }
+
+      updateTracksAndSave(nextTracks);
     },
 
     updateElementStartTimeWithRipple: (trackId, elementId, newStartTime) => {

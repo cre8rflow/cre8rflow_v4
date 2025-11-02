@@ -60,6 +60,7 @@ type RippleRecord = {
   elementId: string;
   originalEnd: number;
   removedDuration: number;
+  selfShift: number;
 };
 
 function applyRippleAdjustments(
@@ -76,8 +77,11 @@ function applyRippleAdjustments(
   const initialTimelineState = useTimelineStore.getState();
 
   for (const trackId of trackIds) {
-    const records = recordsByTrack[trackId]?.filter(
-      (record) => record.removedDuration > DELTA_EPSILON
+    const trackRecords = recordsByTrack[trackId] ?? [];
+    const records = trackRecords.filter(
+      (record) =>
+        record.removedDuration > DELTA_EPSILON ||
+        record.selfShift > DELTA_EPSILON
     );
     if (!records || records.length === 0) continue;
 
@@ -97,11 +101,26 @@ function applyRippleAdjustments(
 
     if (elementsSnapshot.length === 0) continue;
 
+    const selfShiftByElement = new Map<string, number>();
+    for (const record of sortedRecords) {
+      if (record.selfShift > DELTA_EPSILON) {
+        selfShiftByElement.set(
+          record.elementId,
+          (selfShiftByElement.get(record.elementId) ?? 0) + record.selfShift
+        );
+      }
+    }
+
+    const downstreamRecords = sortedRecords.filter(
+      (record) => record.removedDuration > DELTA_EPSILON
+    );
+
     const timelineActions = useTimelineStore.getState();
 
     for (const element of elementsSnapshot) {
-      let shift = 0;
-      for (const record of sortedRecords) {
+      let shift = selfShiftByElement.get(element.id) ?? 0;
+
+      for (const record of downstreamRecords) {
         if (record.elementId === element.id) continue;
         if (record.originalEnd - DELTA_EPSILON <= element.originalStart) {
           shift += record.removedDuration;
@@ -315,23 +334,27 @@ export function trim({ plan }: { plan: TrimPlan }): TrimResult {
       updated.push(result);
 
       if (rippleRequested && !plan.options?.dryRun) {
-        const trimmedRight =
-          result.trimEnd - liveElement.trimEnd > DELTA_EPSILON;
+        const leftShift = Math.max(
+          0,
+          result.trimStart - liveElement.trimStart
+        );
+        const newDuration =
+          liveElement.duration - result.trimStart - result.trimEnd;
+        const removedDuration = Math.max(
+          0,
+          originalDuration - newDuration
+        );
 
-        if (trimmedRight) {
-          const newDuration =
-            liveElement.duration - result.trimStart - result.trimEnd;
-          const removedDuration = originalDuration - newDuration;
-          if (removedDuration > DELTA_EPSILON) {
-            if (!rippleRecordsByTrack[liveElement.trackId]) {
-              rippleRecordsByTrack[liveElement.trackId] = [];
-            }
-            rippleRecordsByTrack[liveElement.trackId].push({
-              elementId: liveElement.id,
-              originalEnd,
-              removedDuration,
-            });
+        if (removedDuration > DELTA_EPSILON || leftShift > DELTA_EPSILON) {
+          if (!rippleRecordsByTrack[liveElement.trackId]) {
+            rippleRecordsByTrack[liveElement.trackId] = [];
           }
+          rippleRecordsByTrack[liveElement.trackId].push({
+            elementId: liveElement.id,
+            originalEnd,
+            removedDuration,
+            selfShift: leftShift,
+          });
         }
       }
     } else {
